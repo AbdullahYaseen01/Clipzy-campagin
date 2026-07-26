@@ -1,4 +1,4 @@
-# Velox
+# Reachly
 
 Web-based bulk email interface with a **490 emails/day** limit. Upload contacts, compose campaigns, and send automatically with rate limiting and daily quota tracking.
 
@@ -81,7 +81,7 @@ jane@example.com,Jane Smith
 | `SMTP_USER` | — | SMTP username |
 | `SMTP_PASS` | — | SMTP password |
 | `SMTP_FROM` | — | From email address |
-| `SMTP_FROM_NAME` | Velox | From display name |
+| `SMTP_FROM_NAME` | Reachly | From display name |
 
 ## Data Storage
 
@@ -91,7 +91,7 @@ Contacts, campaigns, queue, and send logs are stored in `data/store.json`.
 
 ### Vercel (UI + API only — limited)
 
-Velox can run on Vercel for the web UI and API routes, but **bulk background sending does not work** on serverless (no persistent process or disk). Use Vercel for testing the UI, or prefer Railway/Render for production sending.
+Reachly can run on Vercel for the web UI and API routes, but **bulk background sending does not work** on serverless (no persistent process or disk). Use Vercel for testing the UI, or prefer Railway/Render for production sending.
 
 1. Import the GitHub repo in [Vercel](https://vercel.com)
 2. Add environment variables from `.env.example` (SMTP credentials, `DAILY_LIMIT`, etc.)

@@ -18,9 +18,11 @@ const senderState = {
 
 function initAccountState(accountId) {
   if (!senderState.accountState[accountId]) {
+    const today = new Date().toLocaleDateString('en-CA');
+    const persisted = store.getAccountQuotaState(accountId);
     senderState.accountState[accountId] = {
-      dailyQuotaHit: false,
-      quotaHitDate: null,
+      dailyQuotaHit: !!(persisted.dailyQuotaHit && persisted.quotaHitDate === today),
+      quotaHitDate: persisted.quotaHitDate || null,
       blockedUntil: null,
       pausedUntil: null,
       pauseReason: null,
@@ -108,6 +110,16 @@ function personalize(text, contact) {
     '{{personalized_closing}}': generatePersonalizedClosing(c),
   };
 
+  for (const cv of store.getCustomVariables()) {
+    if (cv.token) map[cv.token] = cv.value || '';
+  }
+
+  for (const [key, val] of Object.entries(c)) {
+    if (typeof val === 'string' && key.startsWith('custom_')) {
+      map[`{{${key.replace(/^custom_/, '')}}}`] = val;
+    }
+  }
+
   let result = text || '';
   for (const [token, value] of Object.entries(map)) {
     result = result.replace(new RegExp(token.replace(/[{}]/g, '\\$&'), 'gi'), value);
@@ -171,6 +183,15 @@ function isAccountPaused(accountId) {
   return false;
 }
 
+function markAccountDailyQuotaHit(accountId) {
+  const today = new Date().toLocaleDateString('en-CA');
+  const state = initAccountState(accountId);
+  state.dailyQuotaHit = true;
+  state.quotaHitDate = today;
+  store.setAccountQuotaState(accountId, { dailyQuotaHit: true, quotaHitDate: today });
+  store.setMeta({ lastDailyLimitAt: new Date().toISOString() });
+}
+
 function accountCanSend(accountId) {
   const acc = getAccount(accountId);
   if (!acc) return false;
@@ -181,13 +202,12 @@ function accountCanSend(accountId) {
   if (state.blockedUntil && Date.now() < state.blockedUntil) return false;
   if (state.blockedUntil && Date.now() >= state.blockedUntil) state.blockedUntil = null;
 
-  const remaining = store.getRemainingToday(acc.dailyLimit, accountId);
-  if (remaining <= 0) return false;
+  if (state.dailyQuotaHit && state.quotaHitDate === today) return false;
 
-  // Clear stale quota flag when sends are still available today
-  if (state.dailyQuotaHit && state.quotaHitDate === today) {
-    state.dailyQuotaHit = false;
-    state.quotaHitDate = null;
+  const remaining = store.getRemainingToday(acc.dailyLimit, accountId);
+  if (remaining <= 0) {
+    markAccountDailyQuotaHit(accountId);
+    return false;
   }
 
   return true;
@@ -227,7 +247,13 @@ async function sendOneEmail(campaign, contact, accountId) {
     }];
   }
 
-  await t.sendMail(mailOptions);
+  const timeoutMs = parseInt(process.env.SEND_TIMEOUT_MS || '60000', 10);
+  await Promise.race([
+    t.sendMail(mailOptions),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`SMTP send timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+    }),
+  ]);
 }
 
 async function sendTestEmail(campaign, testTo, sampleContact, accountId) {
@@ -292,11 +318,11 @@ async function processNextEmailForAccount(accountId) {
     }
 
     if (classified.stopDay) {
-      state.dailyQuotaHit = true;
-      state.quotaHitDate = new Date().toLocaleDateString('en-CA');
-      store.requeueItem(item.queue_id, classified.message);
-      console.error(`⛔ [${accountId}] Daily quota hit — remaining saved for tomorrow`);
-      return { success: false, email: item.email, error: classified.message, accountId };
+      markAccountDailyQuotaHit(accountId);
+      store.deferQueueItem(item.queue_id, classified.message);
+      stopAccountSender(accountId);
+      console.error(`⛔ [${accountId}] Gmail daily limit — deferred ${item.email} until tomorrow`);
+      return { success: false, email: item.email, error: classified.message, accountId, stopDay: true };
     }
 
     if (classified.pauseAll) {
@@ -372,6 +398,10 @@ function startSender() {
   let started = false;
 
   for (const acc of accounts) {
+    const deferred = store.deferBlockedQueueItems(acc.id);
+    if (deferred > 0) {
+      console.log(`[${acc.id}] Deferred ${deferred} stuck queue item(s) until tomorrow`);
+    }
     const pending = store.getPendingCount(acc.id);
     if (pending > 0 && accountCanSend(acc.id)) {
       scheduleAccountSender(acc.id);
@@ -422,8 +452,10 @@ function resetDailyState() {
     state.pausedUntil = null;
     state.pauseReason = null;
     state.consecutiveRateLimits = 0;
+    state.isSending = false;
+    store.setAccountQuotaState(acc.id, { dailyQuotaHit: false, quotaHitDate: null });
   }
-  store.setMeta({ userStoppedSender: false, lastDailyLimitAt: null });
+  store.setMeta({ userStoppedSender: false, lastDailyLimitAt: null, accountQuotas: {} });
 }
 
 function getAccountStatuses() {
@@ -498,9 +530,45 @@ function getSenderStatus() {
 const defaultAccount = getDefaultAccount();
 const DAILY_LIMIT = defaultAccount?.dailyLimit || parseInt(process.env.DAILY_LIMIT || '490', 10);
 
+function createCustomTransporter(cfg) {
+  const auth = { user: cfg.email || cfg.user, pass: cfg.pass };
+  if (cfg.host === 'smtp.gmail.com') {
+    return nodemailer.createTransport({ service: 'gmail', auth, pool: false });
+  }
+  return nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port || 587,
+    secure: !!cfg.secure,
+    auth,
+    pool: false,
+  });
+}
+
+async function verifyCustomSmtp(cfg) {
+  const t = createCustomTransporter(cfg);
+  await t.verify();
+  return true;
+}
+
+async function sendTestWithCustomConfig(cfg, testTo) {
+  const t = createCustomTransporter(cfg);
+  const fromName = cfg.fromName || cfg.email?.split('@')[0] || 'Test';
+  const fromEmail = cfg.email || cfg.user;
+  await t.sendMail({
+    from: `"${fromName}" <${fromEmail}>`,
+    to: testTo,
+    subject: 'Reachly — SMTP connection test',
+    text: `This is a test email from Reachly.\n\nAccount: ${fromEmail}\nHost: ${cfg.host}:${cfg.port || 587}\n\nIf you received this, your SMTP configuration is working.`,
+    html: `<p>This is a test email from <strong>Reachly</strong>.</p><p>Account: ${fromEmail}<br>Host: ${cfg.host}:${cfg.port || 587}</p><p>If you received this, your SMTP configuration is working.</p>`,
+  });
+  return { sentTo: testTo };
+}
+
 module.exports = {
   getSmtpConfig,
   verifySmtp,
+  verifyCustomSmtp,
+  sendTestWithCustomConfig,
   resetTransporter,
   startSender,
   stopSender,

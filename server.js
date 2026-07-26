@@ -23,8 +23,13 @@ const {
   resetDailyState,
   sendTestEmail,
   renderPreview,
+  verifyCustomSmtp,
+  sendTestWithCustomConfig,
   DAILY_LIMIT,
 } = require('./src/mailer');
+const { getProviders, getProvider } = require('./src/email-providers');
+const { getLeadProviders, searchLeads } = require('./src/lead-providers');
+const { getDataVariables } = require('./src/variables');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -392,12 +397,20 @@ app.post('/api/campaigns/:id/send', (req, res) => {
     return res.status(400).json({ error: 'SMTP not configured for selected account' });
   }
 
-  const contactIds = store.getEligibleContactIds(listId, { skipAlreadySent: true });
+  const isFollowUp = campaign.campaign_type === 'follow_up';
+  const contactIds = isFollowUp
+    ? store.getSuccessfulContactIds(campaign.parent_campaign_id)
+    : store.getEligibleContactIds(listId, { skipAlreadySent: true });
+
   if (contactIds.length === 0) {
-    return res.status(400).json({ error: 'No eligible contacts in selected list (all sent, bounced, or blocked)' });
+    return res.status(400).json({
+      error: isFollowUp
+        ? 'No successful recipients found for follow-up'
+        : 'No eligible contacts in selected list (all sent, bounced, or blocked)',
+    });
   }
 
-  const queued = queueCampaign(id, contactIds);
+  const queued = queueCampaign(id, contactIds, { allowResend: isFollowUp });
   const remaining = store.getRemainingToday(acc.dailyLimit, accountId);
   const daysNeeded = Math.ceil(queued / acc.dailyLimit);
   startSender();
@@ -449,6 +462,87 @@ app.post('/api/campaigns/:id/resume', (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/campaigns/:id/follow-up', (req, res) => {
+  const parentId = parseInt(req.params.id);
+  const parent = store.getCampaign(parentId);
+  if (!parent) return res.status(404).json({ error: 'Campaign not found' });
+
+  const contactIds = store.getSuccessfulContactIds(parentId);
+  if (contactIds.length === 0) {
+    return res.status(400).json({
+      error: 'No successful sends yet — wait until some emails are delivered, then create a follow-up.',
+    });
+  }
+
+  const { subject, body, preheader, delay_days, send_now } = req.body || {};
+  const followTpl = getTemplate('follow-up');
+  const bodyContent = (body || followTpl.body_html).trim();
+  const body_html = toHtmlBody(bodyContent);
+
+  const campaign = store.createCampaign({
+    name: `Follow-up: ${parent.name}`.slice(0, 120),
+    subject: (subject || followTpl.subject).trim(),
+    body_html,
+    body_text: htmlToPlain(body_html),
+    preheader: (preheader || '').trim(),
+    include_unsubscribe: false,
+    smtp_account_id: parent.smtp_account_id,
+    list_id: parent.list_id,
+    attachment: parent.attachment || null,
+    parent_campaign_id: parentId,
+    campaign_type: 'follow_up',
+    delay_days: parseInt(delay_days, 10) || 0,
+  });
+
+  const shouldSend = send_now !== false;
+  let queued = 0;
+  if (shouldSend) {
+    queued = queueCampaign(campaign.id, contactIds, { allowResend: true });
+    startSender();
+  }
+
+  res.json({
+    success: true,
+    campaign,
+    queued,
+    recipients: contactIds.length,
+    message: shouldSend
+      ? `Follow-up campaign created and queued to ${queued.toLocaleString()} successful recipients from campaign #${parentId}.`
+      : `Follow-up draft created for ${contactIds.length.toLocaleString()} successful recipients. Open Campaigns to send.`,
+  });
+});
+
+app.get('/api/campaigns/:id/follow-up-preview', (req, res) => {
+  const parentId = parseInt(req.params.id);
+  const parent = store.getCampaign(parentId);
+  if (!parent) return res.status(404).json({ error: 'Campaign not found' });
+  const contactIds = store.getSuccessfulContactIds(parentId);
+  const tpl = getTemplate('follow-up');
+  res.json({
+    parent: { id: parent.id, name: parent.name, sent_count: parent.sent_count, status: parent.status },
+    eligible: contactIds.length,
+    template: { subject: tpl.subject, body_html: tpl.body_html },
+  });
+});
+
+app.get('/api/demo/data', (req, res) => {
+  res.json({
+    demoEmails: [
+      { id: 'demo1', first_name: 'Ahmad', email: 'ahmad.yaseen@gmail.com', label: 'Ahmad — Gmail Primary', provider: 'gmail', fromName: 'Ahmad Yaseen' },
+      { id: 'demo2', first_name: 'Ahmad', email: 'ahmad.randhawa@outlook.com', label: 'Ahmad — Outlook', provider: 'outlook', fromName: 'Ahmad Randhawa' },
+      { id: 'demo3', first_name: 'Ahmad', email: 'ahmad.demo@yahoo.com', label: 'Ahmad — Yahoo Demo', provider: 'yahoo', fromName: 'Ahmad Demo' },
+      { id: 'demo4', first_name: 'Ahmad', email: 'ahmad@customsmtp.demo', label: 'Ahmad — Custom SMTP', provider: 'custom', fromName: 'Ahmad Yaseen' },
+    ],
+    features: [
+      'Multi-account SMTP (Gmail, Outlook, Yahoo, Custom)',
+      'Follow-up campaigns to successful recipients',
+      'Lead research with Apollo, FindyMail, Hunter, Snov, Lusha, Clearbit',
+      'Variable builder with static + data tokens',
+      'Parallel sending across accounts',
+    ],
+  });
+});
+
 app.post('/api/replies', (req, res) => {
   const { email, subject, snippet } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -475,6 +569,207 @@ app.post('/api/sender/start', (req, res) => {
 app.post('/api/sender/stop', (req, res) => {
   stopSender();
   res.json(getSenderStatus());
+});
+
+// --- Email configuration ---
+
+app.get('/api/email-providers', (req, res) => {
+  res.json(getProviders());
+});
+
+app.get('/api/email-config/accounts', (req, res) => {
+  const envAccounts = getAccounts().map(a => ({
+    id: a.id,
+    provider: a.email?.includes('gmail') ? 'gmail' : 'custom',
+    label: a.label,
+    email: a.email,
+    host: a.host,
+    port: a.port,
+    secure: a.secure,
+    fromName: a.fromName,
+    listId: a.listId,
+    listLabel: a.listLabel,
+    dailyLimit: a.dailyLimit,
+    sendDelayMs: a.sendDelayMs,
+    protected: a.protected,
+    source: 'env',
+    configured: true,
+  }));
+  const saved = store.getSavedSmtpAccounts();
+  const demoAccounts = [
+    {
+      id: 'demo_gmail_ahmad',
+      provider: 'gmail',
+      label: 'Ahmad — Gmail Demo',
+      email: 'ahmad.yaseen@gmail.com',
+      fromName: 'Ahmad Yaseen',
+      host: 'smtp.gmail.com',
+      port: 587,
+      dailyLimit: 490,
+      source: 'demo',
+      configured: true,
+      first_name: 'Ahmad',
+    },
+    {
+      id: 'demo_outlook_ahmad',
+      provider: 'outlook',
+      label: 'Ahmad — Outlook Demo',
+      email: 'ahmad.randhawa@outlook.com',
+      fromName: 'Ahmad Randhawa',
+      host: 'smtp-mail.outlook.com',
+      port: 587,
+      dailyLimit: 300,
+      source: 'demo',
+      configured: true,
+      first_name: 'Ahmad',
+    },
+    {
+      id: 'demo_yahoo_ahmad',
+      provider: 'yahoo',
+      label: 'Ahmad — Yahoo Demo',
+      email: 'ahmad.demo@yahoo.com',
+      fromName: 'Ahmad Demo',
+      host: 'smtp.mail.yahoo.com',
+      port: 587,
+      dailyLimit: 200,
+      source: 'demo',
+      configured: true,
+      first_name: 'Ahmad',
+    },
+  ];
+  res.json({ envAccounts, savedAccounts: saved, demoAccounts });
+});
+
+app.post('/api/email-config/accounts', (req, res) => {
+  try {
+    const saved = store.saveSmtpAccount(req.body);
+    res.json({ success: true, account: saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/email-config/accounts/:id', (req, res) => {
+  store.deleteSavedSmtpAccount(req.params.id);
+  res.json({ success: true });
+});
+
+app.post('/api/email-config/test', async (req, res) => {
+  const { account, host, port, secure, email, pass, fromName } = req.body;
+  try {
+    let cfg;
+    if (account && getAccount(account)) {
+      resetTransporter(account);
+      await verifySmtp(account);
+      const acc = getAccount(account);
+      return res.json({ success: true, message: `SMTP verified for ${acc.email}` });
+    }
+    if (!host || !email || !pass) {
+      return res.status(400).json({ error: 'Host, email, and password are required' });
+    }
+    cfg = { host, port: parseInt(port, 10) || 587, secure: !!secure, email, pass, fromName };
+    await verifyCustomSmtp(cfg);
+    res.json({ success: true, message: `SMTP verified for ${email}` });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/email-config/test-send', async (req, res) => {
+  const { host, port, secure, email, pass, fromName, test_to, account } = req.body;
+  const testTo = test_to || email;
+  if (!testTo) return res.status(400).json({ error: 'Test recipient email required' });
+  try {
+    if (account && getAccount(account)) {
+      await sendTestEmail({
+        subject: 'Reachly — SMTP test',
+        body_html: '<p>SMTP test successful.</p>',
+        body_text: 'SMTP test successful.',
+      }, testTo, { first_name: 'Test', email: testTo, company: 'Test Co', title: 'Tester' }, account);
+      return res.json({ success: true, message: `Test email sent to ${testTo}` });
+    }
+    const cfg = { host, port: parseInt(port, 10) || 587, secure: !!secure, email, pass, fromName };
+    await sendTestWithCustomConfig(cfg, testTo);
+    res.json({ success: true, message: `Test email sent to ${testTo}` });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// --- Lead research ---
+
+app.get('/api/lead-providers', (req, res) => {
+  res.json({ providers: getLeadProviders(), keys: store.getLeadProviderKeys() });
+});
+
+app.post('/api/lead-providers/:id/key', (req, res) => {
+  store.setLeadProviderKey(req.params.id, req.body.apiKey || '');
+  res.json({ success: true });
+});
+
+app.post('/api/lead-research/search', async (req, res) => {
+  const { provider, query } = req.body;
+  if (!provider) return res.status(400).json({ error: 'Provider required' });
+  const apiKey = store.getLeadProviderKey(provider);
+  try {
+    const result = await searchLeads(provider, query || {}, apiKey);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/lead-research/import', (req, res) => {
+  const { leads, list_id } = req.body;
+  if (!Array.isArray(leads) || !leads.length) {
+    return res.status(400).json({ error: 'No leads to import' });
+  }
+  const listId = list_id || 'list1';
+  let added = 0;
+  let skipped = 0;
+  for (const lead of leads) {
+    if (!lead.email) { skipped++; continue; }
+    try {
+      store.addContact(lead.email, {
+        name: lead.name,
+        first_name: lead.first_name,
+        last_name: lead.last_name,
+        company: lead.company,
+        title: lead.title,
+        city: lead.city,
+        industry: lead.industry,
+        linkedin: lead.linkedin,
+        company_profile: lead.company_profile,
+      }, listId);
+      added++;
+    } catch {
+      skipped++;
+    }
+  }
+  res.json({ success: true, added, skipped, listId });
+});
+
+// --- Variables ---
+
+app.get('/api/variables', (req, res) => {
+  res.json({
+    data: getDataVariables(),
+    custom: store.getCustomVariables(),
+  });
+});
+
+app.post('/api/variables/custom', (req, res) => {
+  try {
+    const item = store.addCustomVariable(req.body);
+    res.json({ success: true, variable: item });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/variables/custom/:id', (req, res) => {
+  store.deleteCustomVariable(parseInt(req.params.id, 10));
+  res.json({ success: true });
 });
 
 app.get('*', (req, res) => {
@@ -512,13 +807,13 @@ if (!isServerless) {
   startBackgroundJobs();
   app.listen(PORT, () => {
     const accounts = getAccountStatuses();
-    console.log(`Velox running at http://localhost:${PORT}`);
+    console.log(`Reachly running at http://localhost:${PORT}`);
     for (const a of accounts) {
       console.log(`  ${a.label}: ${a.email} | ${a.todaySent}/${a.dailyLimit} today | ${a.protected ? 'PROTECTED' : 'standard'}`);
     }
   });
 } else {
-  console.log('Velox running in serverless mode (background sender disabled)');
+  console.log('Reachly running in serverless mode (background sender disabled)');
 }
 
 module.exports = app;

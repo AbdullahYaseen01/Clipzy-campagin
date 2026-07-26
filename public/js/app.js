@@ -64,6 +64,8 @@ function showPage(page) {
   if (page === 'compose') loadComposePage();
   if (page === 'contacts') loadContacts();
   if (page === 'campaigns') loadCampaigns();
+  if (page === 'email-config') loadEmailConfig();
+  if (page === 'lead-research') loadLeadResearch();
   if (page === 'settings') loadSettings();
 }
 
@@ -598,6 +600,7 @@ async function loadComposePage() {
     await updateComposeMeta();
     await loadDefaultEmail(true);
     document.getElementById('step1')?.classList.add('done');
+    if (typeof loadVariablesPanel === 'function') loadVariablesPanel();
   } catch { /* ignore */ }
 }
 
@@ -1134,8 +1137,11 @@ async function loadCampaigns() {
 
     tbody.innerHTML = campaigns.map(c => {
       const acc = accountsData.find(a => a.id === c.smtp_account_id);
-      return `<tr>
-        <td>${escapeHtml(c.name)}${c.attachment ? ' 📎' : ''}</td>
+      const typeBadge = c.campaign_type === 'follow_up'
+        ? '<span class="badge-follow">Follow-up</span>'
+        : '';
+      return `<tr class="row-animate">
+        <td>${escapeHtml(c.name)}${c.attachment ? ' 📎' : ''} ${typeBadge}</td>
         <td style="font-size:0.8rem">${acc ? escapeHtml(acc.email.split('@')[0]) : c.smtp_account_id || '—'}</td>
         <td>${c.list_id || '—'}</td>
         <td>${escapeHtml(c.subject)}</td>
@@ -1144,7 +1150,7 @@ async function loadCampaigns() {
         <td>${c.failed_count}</td>
         <td>${c.total_recipients}</td>
         <td>${formatDate(c.created_at)}</td>
-        <td>${campaignActions(c)}</td>
+        <td><div class="campaign-actions-cell">${campaignActions(c)}</div></td>
       </tr>`;
     }).join('');
   } catch (err) {
@@ -1153,18 +1159,48 @@ async function loadCampaigns() {
 }
 
 function campaignActions(c) {
+  const followUpBtn = (c.sent_count > 0 && c.campaign_type !== 'follow_up')
+    ? `<button class="btn btn-sm btn-3d btn-follow" onclick="createFollowUp(${c.id})" title="Send follow-up to successful recipients">Follow-up</button>`
+    : '';
   if (c.status === 'draft') {
-    return `<button class="btn btn-sm btn-success" onclick="sendCampaign(${c.id})">Send</button>`;
+    return `<button class="btn btn-sm btn-success btn-3d" onclick="sendCampaign(${c.id})">Send</button>${followUpBtn}`;
   }
   if (c.status === 'paused') {
-    return `<button class="btn btn-sm" onclick="editCampaign(${c.id})">Edit</button>
-      <button class="btn btn-sm btn-primary" onclick="resumeCampaign(${c.id})">Resume</button>`;
+    return `<button class="btn btn-sm btn-3d" onclick="editCampaign(${c.id})">Edit</button>
+      <button class="btn btn-sm btn-primary btn-3d" onclick="resumeCampaign(${c.id})">Resume</button>
+      ${followUpBtn}`;
   }
   if (c.status === 'sending' || c.status === 'queued') {
-    return `<button class="btn btn-sm" onclick="pauseAndEditCampaign(${c.id})">Pause &amp; Edit</button>
-      <button class="btn btn-sm" onclick="pauseCampaign(${c.id})">Pause</button>`;
+    return `<button class="btn btn-sm btn-3d" onclick="pauseAndEditCampaign(${c.id})">Pause &amp; Edit</button>
+      <button class="btn btn-sm btn-3d" onclick="pauseCampaign(${c.id})">Pause</button>
+      ${followUpBtn}`;
   }
-  return '—';
+  if (c.status === 'completed') {
+    return followUpBtn || '—';
+  }
+  return followUpBtn || '—';
+}
+
+async function createFollowUp(id) {
+  try {
+    const preview = await api(`/campaigns/${id}/follow-up-preview`);
+    if (!preview.eligible) {
+      toast('No successful sends yet for this campaign', 'error');
+      return;
+    }
+    if (!confirm(`Create follow-up for ${preview.eligible.toLocaleString()} people who received campaign #${id}?\n\nThis queues a 2nd email only to successful recipients.`)) {
+      return;
+    }
+    const result = await api(`/campaigns/${id}/follow-up`, {
+      method: 'POST',
+      body: JSON.stringify({ send_now: true }),
+    });
+    toast(result.message);
+    loadCampaigns();
+    loadDashboard();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 async function editCampaign(id) {

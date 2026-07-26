@@ -71,14 +71,37 @@ linkedin.com/in/ahmadyaseen1</p>`,
   },
 };
 
-const TEMPLATES = { default: DEFAULT_EMAIL, 'job-outreach': DEFAULT_EMAIL };
+const FOLLOW_UP_EMAIL = {
+  id: 'follow-up',
+  version: 1,
+  name: 'Follow-up — gentle nudge',
+  subject: 'Following up, {{first_name}} — {{company}}',
+  preheader: '',
+  body_html: `<p>Hi {{first_name}},</p>
+
+<p>I wanted to follow up briefly on my earlier note about senior engineering work — embedded, IoT, AI, and full-stack systems.</p>
+
+<p>If timing is better now, I would welcome a short conversation about how I could support {{company}}. If not, no worries at all — happy to reconnect later.</p>
+
+<p>Resume is still attached for convenience. Calendar: calendly.com/ahmadrandhawa01/30min</p>
+
+<p>Best regards,<br>
+Ahmad Yaseen<br>
+Senior Software Developer | IoT, AI, Embedded and Full Stack Engineer<br>
+linkedin.com/in/ahmadyaseen1</p>`,
+};
+
+const TEMPLATES = { default: DEFAULT_EMAIL, 'job-outreach': DEFAULT_EMAIL, 'follow-up': FOLLOW_UP_EMAIL };
 
 function getTemplate(id) {
   return TEMPLATES[id] || TEMPLATES.default;
 }
 
 function listTemplates() {
-  return [{ id: 'default', name: DEFAULT_EMAIL.name, subject: DEFAULT_EMAIL.subject }];
+  return [
+    { id: 'default', name: DEFAULT_EMAIL.name, subject: DEFAULT_EMAIL.subject },
+    { id: 'follow-up', name: FOLLOW_UP_EMAIL.name, subject: FOLLOW_UP_EMAIL.subject },
+  ];
 }
 
-module.exports = { getTemplate, listTemplates, DEFAULT_EMAIL };
+module.exports = { getTemplate, listTemplates, DEFAULT_EMAIL, FOLLOW_UP_EMAIL };

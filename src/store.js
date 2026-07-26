@@ -225,6 +225,34 @@ function getEligibleContactIds(listId, { skipAlreadySent = true } = {}) {
   });
 }
 
+function getSuccessfulContactIds(campaignId) {
+  return withStoreRead((data) => {
+    const ids = new Set();
+    for (const log of data.send_log) {
+      if (log.campaign_id === campaignId && log.status === 'sent' && log.contact_id) {
+        ids.add(log.contact_id);
+      }
+    }
+    for (const q of data.send_queue) {
+      if (q.campaign_id === campaignId && q.status === 'sent' && q.contact_id) {
+        ids.add(q.contact_id);
+      }
+    }
+    return [...ids].filter(id => {
+      const c = data.contacts.find(x => x.id === id);
+      return c && c.status === 'active';
+    });
+  });
+}
+
+function getCampaignSentCount(campaignId) {
+  return withStoreRead((data) => {
+    const camp = data.campaigns.find(c => c.id === campaignId);
+    if (!camp) return 0;
+    return camp.sent_count || 0;
+  });
+}
+
 function getContactCounts(listId = null) {
   return withStoreRead((data) => {
     let contacts = data.contacts;
@@ -273,13 +301,16 @@ function getCampaign(id) {
   });
 }
 
-function createCampaign({ name, subject, body_html, body_text = '', attachment = null, preheader = '', include_unsubscribe = false, smtp_account_id = 'account1', list_id = 'list1' }) {
+function createCampaign({ name, subject, body_html, body_text = '', attachment = null, preheader = '', include_unsubscribe = false, smtp_account_id = 'account1', list_id = 'list1', parent_campaign_id = null, campaign_type = 'initial', delay_days = 0 }) {
   return withStore((data) => {
     const campaign = {
       id: nextId(data, 'campaigns'), name, subject, body_html, body_text,
       preheader, include_unsubscribe,
       smtp_account_id, list_id,
       attachment,
+      parent_campaign_id,
+      campaign_type: campaign_type || 'initial',
+      delay_days: delay_days || 0,
       status: 'draft', total_recipients: 0, sent_count: 0, failed_count: 0,
       created_at: now(), started_at: null, completed_at: null,
     };
@@ -309,10 +340,11 @@ function getCampaignsByStatus(statuses) {
 
 // --- Queue ---
 
-function queueCampaign(campaignId, contactIds) {
+function queueCampaign(campaignId, contactIds, { allowResend = false } = {}) {
   return withStore((data) => {
     const camp = data.campaigns.find(c => c.id === campaignId);
     const listId = camp?.list_id || 'list1';
+    const isFollowUp = allowResend || camp?.campaign_type === 'follow_up';
     let added = 0;
 
     for (const contactId of contactIds) {
@@ -322,10 +354,19 @@ function queueCampaign(campaignId, contactIds) {
       const alreadyQueued = data.send_queue.some(q =>
         q.campaign_id === campaignId && q.contact_id === contactId
       );
-      const alreadySent = data.send_log.some(l =>
-        l.status === 'sent' && l.email.toLowerCase() === contact.email.toLowerCase() && l.list_id === listId
-      );
-      if (alreadyQueued || alreadySent) continue;
+      if (alreadyQueued) continue;
+
+      if (!isFollowUp) {
+        const alreadySent = data.send_log.some(l =>
+          l.status === 'sent' && l.email.toLowerCase() === contact.email.toLowerCase() && l.list_id === listId
+        );
+        if (alreadySent) continue;
+      } else {
+        const alreadySentFollowUp = data.send_log.some(l =>
+          l.status === 'sent' && l.campaign_id === campaignId && l.contact_id === contactId
+        );
+        if (alreadySentFollowUp) continue;
+      }
 
       data.send_queue.push({
         id: nextId(data, 'send_queue'),
@@ -336,6 +377,7 @@ function queueCampaign(campaignId, contactIds) {
         status: 'pending',
         error_message: null,
         sent_at: null,
+        is_follow_up: !!isFollowUp,
       });
       added++;
     }
@@ -350,8 +392,10 @@ function queueCampaign(campaignId, contactIds) {
 
 function getPendingQueue(limit, accountId = null) {
   return withStoreRead((data) => {
+    const now = Date.now();
     const items = data.send_queue
       .filter(q => q.status === 'pending')
+      .filter(q => !q.deferred_until || new Date(q.deferred_until).getTime() <= now)
       .sort((a, b) => a.id - b.id);
 
     const result = [];
@@ -417,6 +461,54 @@ function requeueItem(queueId, errorMessage) {
       q.retry_count = (q.retry_count || 0) + 1;
     }
   });
+}
+
+function endOfToday() {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d.toISOString();
+}
+
+function deferQueueItem(queueId, errorMessage) {
+  withStore((data) => {
+    const q = data.send_queue.find(q => q.id === queueId);
+    if (q) {
+      q.status = 'pending';
+      q.error_message = errorMessage;
+      q.deferred_until = endOfToday();
+    }
+  });
+}
+
+function deferBlockedQueueItems(accountId = null) {
+  return withStore((data) => {
+    let count = 0;
+    for (const q of data.send_queue) {
+      if (q.status !== 'pending') continue;
+      const camp = data.campaigns.find(c => c.id === q.campaign_id);
+      const smtpId = q.smtp_account_id || camp?.smtp_account_id || 'account1';
+      if (accountId && smtpId !== accountId) continue;
+      const msg = (q.error_message || '').toLowerCase();
+      const stuck = msg.includes('daily') && msg.includes('limit') && (q.retry_count || 0) >= 3;
+      if (stuck) {
+        q.deferred_until = endOfToday();
+        count++;
+      }
+    }
+    return count;
+  });
+}
+
+function getAccountQuotaState(accountId) {
+  const meta = getMeta();
+  return meta.accountQuotas?.[accountId] || {};
+}
+
+function setAccountQuotaState(accountId, fields) {
+  const meta = getMeta();
+  const accountQuotas = { ...(meta.accountQuotas || {}) };
+  accountQuotas[accountId] = { ...(accountQuotas[accountId] || {}), ...fields };
+  setMeta({ accountQuotas });
 }
 
 function pauseAllCampaigns() {
@@ -551,6 +643,122 @@ function setMeta(fields) {
   });
 }
 
+function getCustomVariables() {
+  return withStoreRead((data) => data.meta?.custom_variables || []);
+}
+
+function setCustomVariables(vars) {
+  withStore((data) => {
+    data.meta = { ...(data.meta || {}), custom_variables: vars };
+  });
+}
+
+function addCustomVariable({ name, value, content }) {
+  const { normalizeToken } = require('./variables');
+  return withStore((data) => {
+    const vars = data.meta?.custom_variables || [];
+    const token = normalizeToken(name);
+    if (!token) throw new Error('Variable name is required');
+    if (vars.some(v => v.token === token)) throw new Error('Variable already exists');
+    const item = {
+      id: vars.length ? Math.max(...vars.map(v => v.id || 0)) + 1 : 1,
+      name: name.trim(),
+      token,
+      value: value || content || '',
+      source: 'static',
+      created_at: now(),
+    };
+    if (!data.meta) data.meta = {};
+    data.meta.custom_variables = [...vars, item];
+    return item;
+  });
+}
+
+function deleteCustomVariable(id) {
+  withStore((data) => {
+    const vars = data.meta?.custom_variables || [];
+    data.meta = {
+      ...(data.meta || {}),
+      custom_variables: vars.filter(v => v.id !== id),
+    };
+  });
+}
+
+function getLeadProviderKeys() {
+  return withStoreRead((data) => {
+    const keys = data.meta?.lead_provider_keys || {};
+    return Object.fromEntries(
+      Object.entries(keys).map(([k, v]) => [k, { configured: !!v, masked: v ? `${v.slice(0, 4)}••••` : '' }])
+    );
+  });
+}
+
+function getLeadProviderKey(providerId) {
+  return withStoreRead((data) => data.meta?.lead_provider_keys?.[providerId] || '');
+}
+
+function setLeadProviderKey(providerId, apiKey) {
+  withStore((data) => {
+    const keys = { ...(data.meta?.lead_provider_keys || {}) };
+    if (apiKey) keys[providerId] = apiKey.trim();
+    else delete keys[providerId];
+    data.meta = { ...(data.meta || {}), lead_provider_keys: keys };
+  });
+}
+
+function getSavedSmtpAccounts() {
+  return withStoreRead((data) => (data.meta?.saved_smtp_accounts || []).map(a => ({
+    ...a,
+    pass: a.pass ? '••••••••' : '',
+  })));
+}
+
+function saveSmtpAccount(account) {
+  return withStore((data) => {
+    const list = data.meta?.saved_smtp_accounts || [];
+    const id = account.id || `saved_${Date.now()}`;
+    const existing = list.findIndex(a => a.id === id);
+    const entry = {
+      id,
+      provider: account.provider || 'custom',
+      label: account.label || account.email,
+      host: account.host,
+      port: parseInt(account.port, 10) || 587,
+      secure: !!account.secure,
+      email: account.email?.trim(),
+      fromName: account.fromName || account.email?.split('@')[0] || '',
+      pass: account.pass && account.pass !== '••••••••' ? account.pass.replace(/\s/g, '') : undefined,
+      listId: account.listId || 'list1',
+      dailyLimit: parseInt(account.dailyLimit, 10) || 490,
+      sendDelayMs: parseInt(account.sendDelayMs, 10) || 5000,
+      verified: !!account.verified,
+      updated_at: now(),
+    };
+    if (existing >= 0) {
+      if (!entry.pass) entry.pass = list[existing].pass;
+      list[existing] = { ...list[existing], ...entry };
+    } else {
+      if (!entry.pass) throw new Error('Password is required');
+      list.push(entry);
+    }
+    data.meta = { ...(data.meta || {}), saved_smtp_accounts: list };
+    return { ...entry, pass: '••••••••' };
+  });
+}
+
+function getSavedSmtpAccountRaw(id) {
+  return withStoreRead((data) => (data.meta?.saved_smtp_accounts || []).find(a => a.id === id) || null);
+}
+
+function deleteSavedSmtpAccount(id) {
+  withStore((data) => {
+    data.meta = {
+      ...(data.meta || {}),
+      saved_smtp_accounts: (data.meta?.saved_smtp_accounts || []).filter(a => a.id !== id),
+    };
+  });
+}
+
 function getQueueProgress() {
   return withStoreRead((data) => {
     const total = data.send_queue.length;
@@ -561,6 +769,7 @@ function getQueueProgress() {
 
     const nextItem = data.send_queue
       .filter(q => q.status === 'pending')
+      .filter(q => !q.deferred_until || new Date(q.deferred_until).getTime() <= Date.now())
       .sort((a, b) => a.id - b.id)[0];
 
     let nextEmail = null;
@@ -747,11 +956,16 @@ function markBounce(email, reason = 'Delivery failed') {
 
 module.exports = {
   getContacts, addContact, addContactsBulk, deleteContact, deleteAllContacts,
-  getActiveContactIds, getEligibleContactIds, getContactCounts, getAllListCounts,
+  getActiveContactIds, getEligibleContactIds, getSuccessfulContactIds, getCampaignSentCount, getContactCounts, getAllListCounts,
   suppressContact, getSentEmailsForList,
   getCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, getCampaignsByStatus,
-  queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, pauseAllCampaigns, pauseCampaignsForAccount,
+  queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, deferQueueItem,
+  deferBlockedQueueItems, getAccountQuotaState, setAccountQuotaState,
+  pauseAllCampaigns, pauseCampaignsForAccount,
   markSent, markFailed, updateCampaignStatuses,
   getTodaySentCount, getRemainingToday, getRecentLogs, getLast7Days, getCampaignStatusCounts,
-  getMeta, setMeta, getQueueProgress, resumeSendingCampaigns, getAnalytics, markReply, markBounce,
+  getMeta, setMeta, getCustomVariables, setCustomVariables, addCustomVariable, deleteCustomVariable,
+  getLeadProviderKeys, getLeadProviderKey, setLeadProviderKey,
+  getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, deleteSavedSmtpAccount,
+  getQueueProgress, resumeSendingCampaigns, getAnalytics, markReply, markBounce,
 };

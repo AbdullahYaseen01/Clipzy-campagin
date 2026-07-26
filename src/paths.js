@@ -3,7 +3,7 @@ const path = require('path');
 
 const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const projectRoot = path.join(__dirname, '..');
-const writableRoot = isServerless ? path.join('/tmp', 'velox') : projectRoot;
+const writableRoot = isServerless ? path.join('/tmp', 'reachly') : projectRoot;
 
 function ensureDir(dir) {
   try {

@@ -1,7 +1,7 @@
 {
-  "name": "velox",
+  "name": "reachly",
   "version": "1.0.0",
-  "description": "Velox — web-based bulk email sender with 490 emails/day limit",
+  "description": "Reachly — web-based bulk email sender with 490 emails/day limit",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
