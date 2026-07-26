@@ -5,3 +5,4 @@ data/store.json
 uploads/
 attachments/
 *.log
+.vercel
