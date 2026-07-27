@@ -87,6 +87,10 @@ async function api(path, options = {}) {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
   });
+  if (res.status === 401) {
+    window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || data.message || 'Request failed');
   return data;

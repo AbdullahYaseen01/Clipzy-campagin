@@ -82,6 +82,8 @@ jane@example.com,Jane Smith
 | `SMTP_PASS` | — | SMTP password |
 | `SMTP_FROM` | — | From email address |
 | `SMTP_FROM_NAME` | Reachly | From display name |
+| `DASHBOARD_PASSWORD` | 8888 | Dashboard login password |
+| `AUTH_SECRET` | — | Optional signing secret for login cookies (set on Vercel/Railway) |
 
 ## Data Storage
 
@@ -89,17 +91,35 @@ Contacts, campaigns, queue, and send logs are stored in `data/store.json`.
 
 ## Deploying
 
-### Vercel (UI + API only — limited)
+Reachly is designed to run in two places:
 
-Reachly can run on Vercel for the web UI and API routes, but **bulk background sending does not work** on serverless (no persistent process or disk). Use Vercel for testing the UI, or prefer Railway/Render for production sending.
+- **Vercel** — password-protected dashboard UI and API (no persistent background sending)
+- **Railway** — always-on Node server for real campaign sending and queue processing
+
+Use the same environment variables on both platforms, especially `DASHBOARD_PASSWORD` and `AUTH_SECRET`.
+
+### Vercel (locked dashboard UI)
+
+Reachly can run on Vercel for the web UI and API routes, but **bulk background sending does not work** on serverless (no persistent process or disk). Use Vercel for remote dashboard access with password protection.
 
 1. Import the GitHub repo in [Vercel](https://vercel.com)
-2. Add environment variables from `.env.example` (SMTP credentials, `DAILY_LIMIT`, etc.)
-3. Deploy — `vercel.json` routes `/api/*` to the Express handler
+2. Add environment variables from `.env.example`
+3. Set at minimum:
+   - `DASHBOARD_PASSWORD=8888`
+   - `AUTH_SECRET` — any long random string
+   - SMTP credentials
+4. Deploy — all routes go through Express so the login screen is enforced
 
-### Railway / Render (recommended for sending)
+### Railway (recommended for sending)
 
-Run as a normal Node server so the background sender and daily queue work:
+Railway keeps the Node process running 24/7 so the background sender, daily queue, and campaign processing continue even when you close your laptop.
+
+1. Create a new project in [Railway](https://railway.com)
+2. Connect the same GitHub repo (`ayaseen-lab/velox`)
+3. Railway will detect `npm start` from `package.json` / `railway.toml`
+4. Add the same environment variables as local `.env`
+5. Optional: attach a **volume** mounted to `/app/data` so contacts, campaigns, and queue survive redeploys
+6. Deploy — Railway will keep the service running and restart it on failure
 
 ```bash
 npm install

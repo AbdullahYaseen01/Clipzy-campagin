@@ -5,4 +5,5 @@ data/store.json
 uploads/
 attachments/
 *.log
+reachly.log
 .vercel

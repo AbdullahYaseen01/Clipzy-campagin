@@ -30,9 +30,14 @@ const {
 const { getProviders, getProvider } = require('./src/email-providers');
 const { getLeadProviders, searchLeads } = require('./src/lead-providers');
 const { getDataVariables } = require('./src/variables');
+const { requireAuth, isAuthenticated, setAuthCookie, clearAuthCookie, verifyPassword } = require('./src/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+if (process.env.VERCEL || process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 
 const upload = multer({ dest: uploadsDir, limits: { fileSize: 50 * 1024 * 1024 } });
 const attachmentUpload = multer({ dest: attachmentsDir, limits: { fileSize: 25 * 1024 * 1024 } });
@@ -46,7 +51,30 @@ function toHtmlBody(body) {
 }
 
 app.use(express.json({ limit: '5mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'static', 'login.html'));
+});
+
+app.get('/api/auth/status', (req, res) => {
+  res.json({ authenticated: isAuthenticated(req) });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { password } = req.body || {};
+  if (!verifyPassword(password)) {
+    return res.status(401).json({ error: 'Invalid password' });
+  }
+  setAuthCookie(res);
+  res.json({ success: true });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  clearAuthCookie(res);
+  res.json({ success: true });
+});
+
+app.use(requireAuth);
 
 app.post('/api/campaigns/validate', (req, res) => {
   const { subject, body, preheader } = req.body;
@@ -772,8 +800,10 @@ app.delete('/api/variables/custom/:id', (req, res) => {
   res.json({ success: true });
 });
 
+app.use(express.static(path.join(__dirname, 'static')));
+
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'static', 'index.html'));
 });
 
 app.use((err, req, res, next) => {
