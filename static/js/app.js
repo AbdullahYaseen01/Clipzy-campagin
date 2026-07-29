@@ -858,7 +858,7 @@ async function loadDefaultEmail(silent = false) {
     document.getElementById('step1')?.classList.add('done');
     runValidation();
     updatePreview();
-    if (!silent) toast('Default email loaded — attach resume, preview, test, then send');
+    if (!silent) toast('Default email loaded — preview, test, then send');
   } catch (err) {
     if (!silent) toast(err.message, 'error');
   }
@@ -921,11 +921,6 @@ async function saveCampaign(andSend) {
 
   if (!data.subject || !getEditorText()) {
     toast('Click "Load Default Email" first', 'error');
-    return;
-  }
-
-  if (andSend && !data.attachmentFile) {
-    toast('Please attach your resume before sending the campaign', 'error');
     return;
   }
 
