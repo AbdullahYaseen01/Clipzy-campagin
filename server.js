@@ -608,7 +608,7 @@ app.get('/api/email-providers', (req, res) => {
 app.get('/api/email-config/accounts', (req, res) => {
   const envAccounts = getAccounts().map(a => ({
     id: a.id,
-    provider: a.email?.includes('gmail') ? 'gmail' : 'custom',
+    provider: a.email?.includes('gmail') ? 'gmail' : a.host?.includes('hostinger') ? 'hostinger' : 'custom',
     label: a.label,
     email: a.email,
     host: a.host,

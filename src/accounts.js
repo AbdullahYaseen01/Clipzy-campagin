@@ -13,6 +13,9 @@ function buildAccount({
   dailyLimit,
   sendDelayMs,
   protected: isProtected,
+  host,
+  port,
+  secure,
 }) {
   if (!email || !pass) return null;
   return {
@@ -20,9 +23,9 @@ function buildAccount({
     listId,
     label,
     listLabel,
-    host: HOST,
-    port: PORT,
-    secure: SECURE,
+    host: host || HOST,
+    port: port != null ? port : PORT,
+    secure: secure != null ? secure : SECURE,
     email: email.trim(),
     pass: pass.replace(/\s/g, ''),
     from: email.trim(),
@@ -63,6 +66,23 @@ function loadAccounts() {
     protected: true,
   });
   if (account2) accounts.push(account2);
+
+  const account3 = buildAccount({
+    id: 'account3',
+    listId: 'list3',
+    label: 'Email 3 — Hostinger',
+    listLabel: 'Data List 3',
+    email: process.env.SMTP_ACCOUNT_3_USER,
+    pass: process.env.SMTP_ACCOUNT_3_PASS,
+    fromName: process.env.SMTP_ACCOUNT_3_FROM_NAME,
+    host: process.env.SMTP_ACCOUNT_3_HOST || 'smtp.hostinger.com',
+    port: parseInt(process.env.SMTP_ACCOUNT_3_PORT || '465', 10),
+    secure: process.env.SMTP_ACCOUNT_3_SECURE !== 'false',
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_3_DAILY_LIMIT || '490', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_3_DELAY_MS || '5000', 10),
+    protected: false,
+  });
+  if (account3) accounts.push(account3);
 
   return accounts;
 }

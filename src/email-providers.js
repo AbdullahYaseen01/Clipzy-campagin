@@ -36,6 +36,15 @@ const PROVIDERS = [
     hint: 'Use your Zoho email and app-specific password.',
   },
   {
+    id: 'hostinger',
+    name: 'Hostinger Email',
+    icon: '🌐',
+    host: 'smtp.hostinger.com',
+    port: 465,
+    secure: true,
+    hint: 'Use your full Hostinger email address and mailbox password.',
+  },
+  {
     id: 'custom',
     name: 'Custom SMTP',
     icon: '⚙️',
