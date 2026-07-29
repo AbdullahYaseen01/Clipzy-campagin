@@ -84,6 +84,40 @@ function loadAccounts() {
   });
   if (account3) accounts.push(account3);
 
+  const account4 = buildAccount({
+    id: 'account4',
+    listId: 'list4',
+    label: 'Email 4 — Hostinger (Ahmad)',
+    listLabel: 'Data List 4',
+    email: process.env.SMTP_ACCOUNT_4_USER,
+    pass: process.env.SMTP_ACCOUNT_4_PASS,
+    fromName: process.env.SMTP_ACCOUNT_4_FROM_NAME,
+    host: process.env.SMTP_ACCOUNT_4_HOST || 'smtp.hostinger.com',
+    port: parseInt(process.env.SMTP_ACCOUNT_4_PORT || '465', 10),
+    secure: process.env.SMTP_ACCOUNT_4_SECURE !== 'false',
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_4_DAILY_LIMIT || '490', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_4_DELAY_MS || '5000', 10),
+    protected: false,
+  });
+  if (account4) accounts.push(account4);
+
+  const account5 = buildAccount({
+    id: 'account5',
+    listId: 'list5',
+    label: 'Email 5 — Hostinger (Outreach)',
+    listLabel: 'Data List 5',
+    email: process.env.SMTP_ACCOUNT_5_USER,
+    pass: process.env.SMTP_ACCOUNT_5_PASS,
+    fromName: process.env.SMTP_ACCOUNT_5_FROM_NAME,
+    host: process.env.SMTP_ACCOUNT_5_HOST || 'smtp.hostinger.com',
+    port: parseInt(process.env.SMTP_ACCOUNT_5_PORT || '465', 10),
+    secure: process.env.SMTP_ACCOUNT_5_SECURE !== 'false',
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_5_DAILY_LIMIT || '490', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_5_DELAY_MS || '5000', 10),
+    protected: false,
+  });
+  if (account5) accounts.push(account5);
+
   return accounts;
 }
 
