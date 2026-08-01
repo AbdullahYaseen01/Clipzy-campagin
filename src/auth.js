@@ -36,7 +36,7 @@ function isPublicPath(req) {
   if (path === '/login' || path === '/login.html') return true;
   if (path === '/api/auth/login' && method === 'POST') return true;
   if (path === '/api/auth/status' && method === 'GET') return true;
-  if (method === 'GET' && path.startsWith('/css/')) return true;
+  if (method === 'GET' && (path.startsWith('/css/') || path.startsWith('/js/'))) return true;
   return false;
 }
 

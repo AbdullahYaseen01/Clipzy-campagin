@@ -4,7 +4,11 @@ const crypto = require('crypto');
 const store = require('./store');
 const { getAccounts, getAccount, getDefaultAccount } = require('./accounts');
 const { htmlToPlain, wrapHtmlEmail, classifySmtpError } = require('./email-utils');
-const { generatePersonalizedOpener, generatePersonalizedClosing } = require('./personalize-opener');
+const {
+  generatePersonalizedOpener,
+  generatePersonalizedClosing,
+  generatePersonalizedSubject,
+} = require('./personalize-opener');
 
 const transporters = {};
 const accountTimers = {};
@@ -108,6 +112,7 @@ function personalize(text, contact) {
     '{{industry}}': c.industry || 'your industry',
     '{{personalized_opener}}': generatePersonalizedOpener(c),
     '{{personalized_closing}}': generatePersonalizedClosing(c),
+    '{{personalized_subject}}': generatePersonalizedSubject(c),
   };
 
   for (const cv of store.getCustomVariables()) {

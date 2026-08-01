@@ -809,7 +809,8 @@ app.get('*', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Request error:', err);
   if (res.headersSent) return next(err);
-  res.status(500).json({ error: err.message || 'Internal server error' });
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({ error: err.message || 'Internal server error' });
 });
 
 function startBackgroundJobs() {
