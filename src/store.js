@@ -204,24 +204,49 @@ function getActiveContactIds(listId = null) {
 
 function getEligibleContactIds(listId, { skipAlreadySent = true } = {}) {
   return withStoreRead((data) => {
+    const allLists = !listId || listId === 'all';
     const sentEmails = new Set();
     if (skipAlreadySent) {
       for (const log of data.send_log) {
-        if (log.status === 'sent' && log.list_id === listId) {
+        if (log.status === 'sent' && (allLists || log.list_id === listId)) {
           sentEmails.add(log.email.toLowerCase());
         }
       }
       for (const q of data.send_queue) {
         if (q.status === 'sent') {
           const contact = data.contacts.find(c => c.id === q.contact_id);
-          if (contact?.list_id === listId) sentEmails.add(contact.email.toLowerCase());
+          if (contact && (allLists || contact.list_id === listId)) {
+            sentEmails.add(contact.email.toLowerCase());
+          }
         }
       }
     }
     return data.contacts
-      .filter(c => c.list_id === listId && c.status === 'active')
+      .filter(c => c.status === 'active' && (allLists || c.list_id === listId))
       .filter(c => !skipAlreadySent || !sentEmails.has(c.email.toLowerCase()))
       .map(c => c.id);
+  });
+}
+
+/** Which SMTP account successfully sent the parent email to this contact. */
+function getSentAccountForContact(parentCampaignId, contactId) {
+  return withStoreRead((data) => {
+    const logs = data.send_log
+      .filter(l =>
+        l.campaign_id === parentCampaignId
+        && l.contact_id === contactId
+        && l.status === 'sent'
+      )
+      .sort((a, b) => String(b.sent_at || '').localeCompare(String(a.sent_at || '')));
+    if (logs[0]?.smtp_account_id) return logs[0].smtp_account_id;
+
+    const q = data.send_queue.find(item =>
+      item.campaign_id === parentCampaignId
+      && item.contact_id === contactId
+      && item.status === 'sent'
+      && item.smtp_account_id
+    );
+    return q?.smtp_account_id || null;
   });
 }
 
@@ -340,12 +365,32 @@ function getCampaignsByStatus(statuses) {
 
 // --- Queue ---
 
-function queueCampaign(campaignId, contactIds, { allowResend = false } = {}) {
+function queueCampaign(campaignId, contactIds, { allowResend = false, smtpAccountIds = null } = {}) {
   return withStore((data) => {
     const camp = data.campaigns.find(c => c.id === campaignId);
     const listId = camp?.list_id || 'list1';
     const isFollowUp = allowResend || camp?.campaign_type === 'follow_up';
+    const accountPool = Array.isArray(smtpAccountIds) && smtpAccountIds.length > 0 ? smtpAccountIds : null;
+    let rotateIndex = 0;
     let added = 0;
+
+    // Sticky follow-up: same SMTP account that delivered the first email
+    const parentAccountByContact = new Map();
+    if (isFollowUp && camp?.parent_campaign_id) {
+      const parentId = camp.parent_campaign_id;
+      for (const log of data.send_log) {
+        if (log.campaign_id === parentId && log.status === 'sent' && log.contact_id && log.smtp_account_id) {
+          parentAccountByContact.set(log.contact_id, log.smtp_account_id);
+        }
+      }
+      for (const q of data.send_queue) {
+        if (q.campaign_id === parentId && q.status === 'sent' && q.contact_id && q.smtp_account_id) {
+          if (!parentAccountByContact.has(q.contact_id)) {
+            parentAccountByContact.set(q.contact_id, q.smtp_account_id);
+          }
+        }
+      }
+    }
 
     for (const contactId of contactIds) {
       const contact = data.contacts.find(c => c.id === contactId);
@@ -358,7 +403,9 @@ function queueCampaign(campaignId, contactIds, { allowResend = false } = {}) {
 
       if (!isFollowUp) {
         const alreadySent = data.send_log.some(l =>
-          l.status === 'sent' && l.email.toLowerCase() === contact.email.toLowerCase() && l.list_id === listId
+          l.status === 'sent'
+          && l.email.toLowerCase() === contact.email.toLowerCase()
+          && (listId === 'all' || l.list_id === listId)
         );
         if (alreadySent) continue;
       } else {
@@ -368,12 +415,21 @@ function queueCampaign(campaignId, contactIds, { allowResend = false } = {}) {
         if (alreadySentFollowUp) continue;
       }
 
+      let smtpAccountId = camp?.smtp_account_id || 'account1';
+      if (isFollowUp) {
+        smtpAccountId = parentAccountByContact.get(contactId) || accountPool?.[0] || 'account1';
+        if (smtpAccountId === 'all') smtpAccountId = accountPool?.[0] || 'account1';
+      } else if (accountPool) {
+        smtpAccountId = accountPool[rotateIndex % accountPool.length];
+        rotateIndex += 1;
+      }
+
       data.send_queue.push({
         id: nextId(data, 'send_queue'),
         campaign_id: campaignId,
         contact_id: contactId,
-        smtp_account_id: camp?.smtp_account_id || 'account1',
-        list_id: listId,
+        smtp_account_id: smtpAccountId,
+        list_id: listId === 'all' ? (contact.list_id || 'list1') : listId,
         status: 'pending',
         error_message: null,
         sent_at: null,
@@ -956,7 +1012,8 @@ function markBounce(email, reason = 'Delivery failed') {
 
 module.exports = {
   getContacts, addContact, addContactsBulk, deleteContact, deleteAllContacts,
-  getActiveContactIds, getEligibleContactIds, getSuccessfulContactIds, getCampaignSentCount, getContactCounts, getAllListCounts,
+  getActiveContactIds, getEligibleContactIds, getSuccessfulContactIds, getSentAccountForContact,
+  getCampaignSentCount, getContactCounts, getAllListCounts,
   suppressContact, getSentEmailsForList,
   getCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, getCampaignsByStatus,
   queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, deferQueueItem,

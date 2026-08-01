@@ -537,12 +537,27 @@ async function loadAccounts() {
 function populateAccountSelect() {
   const sel = document.getElementById('smtpAccountSelect');
   if (!sel) return;
-  sel.innerHTML = accountsData.map(a =>
+  const allOpt = accountsData.length > 1
+    ? `<option value="all" ${selectedAccountId === 'all' ? 'selected' : ''}>All accounts — split evenly (${accountsData.length} inboxes)</option>`
+    : '';
+  sel.innerHTML = allOpt + accountsData.map(a =>
     `<option value="${a.id}" ${a.id === selectedAccountId ? 'selected' : ''}>${escapeHtml(a.label)} — ${escapeHtml(a.email)} (${a.dailyLimit}/day${a.protected ? ', protected' : ''})</option>`
   ).join('');
 }
 
 function getSelectedAccount() {
+  if (selectedAccountId === 'all') {
+    const totalLimit = accountsData.reduce((s, a) => s + (a.dailyLimit || 0), 0);
+    return {
+      id: 'all',
+      email: `${accountsData.length} accounts (split evenly)`,
+      listId: 'all',
+      listLabel: 'All contact lists',
+      dailyLimit: totalLimit,
+      sendDelayMs: Math.min(...accountsData.map(a => a.sendDelayMs || 5000)),
+      protected: false,
+    };
+  }
   return accountsData.find(a => a.id === selectedAccountId) || accountsData[0];
 }
 
@@ -551,18 +566,27 @@ async function updateComposeMeta() {
   if (!acc) return;
   document.getElementById('composeFrom').textContent = acc.email;
   const lists = await api('/accounts');
-  const listCounts = lists.lists[acc.listId] || { active: 0, total: 0, bounced: 0, blocked: 0 };
-  document.getElementById('composeContactCount').textContent = `${listCounts.active.toLocaleString()} eligible`;
-  document.getElementById('composeTo').textContent = listCounts.active > 0
-    ? `${acc.listLabel} (${listCounts.active.toLocaleString()} contacts, duplicates skipped)`
-    : `Upload file to ${acc.listLabel} in Contacts tab`;
+  let active = 0;
+  if (acc.id === 'all') {
+    active = Object.values(lists.lists || {}).reduce((s, l) => s + (l.active || 0), 0);
+  } else {
+    active = (lists.lists[acc.listId] || {}).active || 0;
+  }
+  document.getElementById('composeContactCount').textContent = `${active.toLocaleString()} eligible`;
+  document.getElementById('composeTo').textContent = active > 0
+    ? `${acc.listLabel} (${active.toLocaleString()} contacts, duplicates skipped)`
+    : `Upload contacts in the Contacts tab first`;
   const hint = document.getElementById('accountHint');
   if (hint) {
-    hint.textContent = acc.protected
-      ? `🛡 Protected: ${acc.dailyLimit}/day max, ${acc.sendDelayMs / 1000}s between sends, extended pause on blocks`
-      : `Standard: ${acc.dailyLimit}/day, ${acc.sendDelayMs / 1000}s delay between sends`;
+    if (acc.id === 'all') {
+      hint.textContent = `Split evenly across ${accountsData.length} inboxes. Follow-ups reuse the same inbox that sent the first email.`;
+    } else {
+      hint.textContent = acc.protected
+        ? `Protected: ${acc.dailyLimit}/day max, ${acc.sendDelayMs / 1000}s between sends, extended pause on blocks`
+        : `Standard: ${acc.dailyLimit}/day, ${acc.sendDelayMs / 1000}s delay between sends`;
+    }
   }
-  if (listCounts.active > 0) document.getElementById('step2')?.classList.add('done');
+  if (active > 0) document.getElementById('step2')?.classList.add('done');
 }
 
 async function updatePreview() {
@@ -598,7 +622,8 @@ async function loadComposePage() {
   initEditor();
   try {
     await loadAccounts();
-    if (accountsData.find(a => a.id === 'account2')) selectedAccountId = 'account2';
+    if (accountsData.length > 1) selectedAccountId = 'all';
+    else if (accountsData.find(a => a.id === 'account2')) selectedAccountId = 'account2';
     populateAccountSelect();
     document.getElementById('smtpAccountSelect').value = selectedAccountId;
     await updateComposeMeta();
@@ -877,7 +902,7 @@ function getComposeFormData() {
 function buildFormData(data) {
   const acc = getSelectedAccount();
   const formData = new FormData();
-  formData.append('name', data.name || 'Ahmad Yaseen - Senior Software Developer (IoT, AI, Embedded, Full Stack)');
+  formData.append('name', data.name || 'Clipzy — YouTuber outreach');
   formData.append('subject', data.subject);
   formData.append('body', data.body);
   formData.append('preheader', data.preheader);

@@ -88,31 +88,32 @@ async function verifySmtp(accountId) {
   return true;
 }
 
-function personalize(text, contact) {
+function personalize(text, contact, extras = {}) {
   const c = typeof contact === 'object' ? contact : { name: contact, email: arguments[2] };
-  const first = c.first_name || (c.name || '').split(' ')[0] || 'there';
-  const last = c.last_name || '';
-  const fullName = c.name || [first, last].filter(Boolean).join(' ') || 'there';
+  const ctx = { ...c, ...extras };
+  const first = ctx.first_name || (ctx.name || '').split(' ')[0] || 'there';
+  const last = ctx.last_name || '';
+  const fullName = ctx.name || [first, last].filter(Boolean).join(' ') || 'there';
 
-  const location = c.city || 'your area';
+  const location = ctx.city || 'your area';
 
   const map = {
     '{{first_name}}': first,
     '{{last_name}}': last,
     '{{name}}': fullName,
-    '{{title}}': c.title || 'your role',
-    '{{job_title}}': c.title || 'your role',
-    '{{company}}': c.company || 'your organization',
-    '{{website}}': c.website || '',
-    '{{linkedin}}': c.linkedin || '',
-    '{{email}}': c.email || '',
-    '{{city}}': c.city || '',
-    '{{country}}': c.country || '',
+    '{{title}}': ctx.title || 'your role',
+    '{{job_title}}': ctx.title || 'your role',
+    '{{company}}': ctx.company || 'your organization',
+    '{{website}}': ctx.website || '',
+    '{{linkedin}}': ctx.linkedin || '',
+    '{{email}}': ctx.email || '',
+    '{{city}}': ctx.city || '',
+    '{{country}}': ctx.country || '',
     '{{location}}': location,
-    '{{industry}}': c.industry || 'your industry',
-    '{{personalized_opener}}': generatePersonalizedOpener(c),
-    '{{personalized_closing}}': generatePersonalizedClosing(c),
-    '{{personalized_subject}}': generatePersonalizedSubject(c),
+    '{{industry}}': ctx.industry || 'your industry',
+    '{{personalized_opener}}': generatePersonalizedOpener(ctx),
+    '{{personalized_closing}}': generatePersonalizedClosing(ctx),
+    '{{personalized_subject}}': generatePersonalizedSubject(ctx),
   };
 
   for (const cv of store.getCustomVariables()) {
@@ -134,16 +135,18 @@ function personalize(text, contact) {
 
 function buildEmailContent(campaign, contact, accountId) {
   const cfg = getSmtpConfig(accountId);
-  const subject = personalize(campaign.subject, contact);
-  const rawHtml = personalize(campaign.body_html, contact);
-  const preheader = personalize(campaign.preheader || '', contact);
+  const extras = {
+    _is_follow_up: campaign.campaign_type === 'follow_up' || campaign.is_follow_up === true,
+  };
+  const subject = personalize(campaign.subject, contact, extras);
+  const rawHtml = personalize(campaign.body_html, contact, extras);
+  const preheader = personalize(campaign.preheader || '', contact, extras);
 
-  const html = campaign.include_unsubscribe === true
-    ? wrapHtmlEmail(rawHtml, { preheader, fromEmail: cfg.from })
-    : wrapHtmlEmail(rawHtml, { preheader });
+  // Always include a soft opt-out line — helps inbox trust on cold outreach
+  const html = wrapHtmlEmail(rawHtml, { preheader, fromEmail: cfg.from || true });
 
   const plainSource = campaign.body_text || htmlToPlain(rawHtml);
-  const text = personalize(plainSource, contact);
+  const text = personalize(plainSource, contact, extras);
 
   return { subject, html, text, cfg };
 }

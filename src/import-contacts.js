@@ -13,6 +13,11 @@ function pick(row, ...keys) {
   return '';
 }
 
+function isValidEmail(email) {
+  if (!email || email.length > 254) return false;
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email);
+}
+
 function normalizeContact(row) {
   const firstName = pick(row, 'first name', 'firstname', 'first_name', 'first');
   const lastName = pick(row, 'last name', 'lastname', 'last_name', 'last');
@@ -26,11 +31,12 @@ function normalizeContact(row) {
   const industry = pick(row, 'industry', 'company industry');
   const companyProfile = pick(row, 'company profile', 'company about', 'about', 'description', 'company description', 'specialties', 'keywords');
   const name = pick(row, 'name', 'full name') || [firstName, lastName].filter(Boolean).join(' ');
+  const resolvedFirst = firstName || (name ? name.split(/\s+/)[0] : '');
 
   return {
-    email,
+    email: email.toLowerCase(),
     name: name || [firstName, lastName].filter(Boolean).join(' '),
-    first_name: firstName,
+    first_name: resolvedFirst,
     last_name: lastName,
     company,
     title,
@@ -55,13 +61,13 @@ function parseContactsCsv(content) {
       relax_column_count: true,
     });
     if (records.length > 0) {
-      return records.map(normalizeContact).filter(c => c.email && c.email.includes('@'));
+      return records.map(normalizeContact).filter(c => isValidEmail(c.email));
     }
   } catch { /* fall through */ }
 
   const lines = parse(trimmed, { columns: false, skip_empty_lines: true, trim: true });
   return lines.map(row => ({
-    email: (row[5] || row[0] || '').trim(),
+    email: (row[5] || row[0] || '').trim().toLowerCase(),
     name: `${(row[2] || '').trim()} ${(row[3] || '').trim()}`.trim(),
     first_name: (row[2] || '').trim(),
     last_name: (row[3] || '').trim(),
@@ -69,14 +75,14 @@ function parseContactsCsv(content) {
     title: (row[4] || '').trim(),
     website: (row[1] || '').trim(),
     linkedin: (row[6] || '').trim(),
-  })).filter(c => c.email && c.email.includes('@'));
+  })).filter(c => isValidEmail(c.email));
 }
 
 function parseContactsXlsx(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const records = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-  return records.map(normalizeContact).filter(c => c.email && c.email.includes('@'));
+  return records.map(normalizeContact).filter(c => isValidEmail(c.email));
 }
 
 module.exports = { parseContactsCsv, parseContactsXlsx, normalizeContact };

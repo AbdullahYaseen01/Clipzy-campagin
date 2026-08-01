@@ -87,7 +87,9 @@ app.post('/api/campaigns/preview', (req, res) => {
   if (!subject || !body) {
     return res.status(400).json({ error: 'Subject and body are required' });
   }
-  const accountId = smtp_account_id || getAccounts()[0]?.id || 'account1';
+  const accountId = (!smtp_account_id || smtp_account_id === 'all')
+    ? (getAccounts()[0]?.id || 'account1')
+    : smtp_account_id;
   const preview = renderPreview({
     subject: subject.trim(),
     body_html: toHtmlBody(body),
@@ -234,7 +236,9 @@ app.get('/api/campaigns/templates/:id', (req, res) => {
 app.post('/api/campaigns/test-email', attachmentUpload.single('attachment'), async (req, res) => {
   const { subject, body, preheader, include_unsubscribe, smtp_account_id, sample_contact, test_to } = req.body;
   const bodyContent = (body || '').trim();
-  const accountId = smtp_account_id || 'account2';
+  const accountId = (!smtp_account_id || smtp_account_id === 'all')
+    ? (getAccounts()[0]?.id || 'account1')
+    : smtp_account_id;
 
   if (!subject || !bodyContent) {
     if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -313,8 +317,9 @@ app.post('/api/campaigns', attachmentUpload.single('attachment'), (req, res) => 
   const { name, subject, body, preheader, include_unsubscribe, smtp_account_id, list_id } = req.body;
   const bodyContent = (body || '').trim();
   const accountId = smtp_account_id || getAccounts()[0]?.id || 'account1';
-  const acc = getAccount(accountId);
-  const listId = list_id || acc?.listId || 'list1';
+  const useAllAccounts = accountId === 'all';
+  const acc = useAllAccounts ? null : getAccount(accountId);
+  const listId = list_id || (useAllAccounts ? 'all' : (acc?.listId || 'list1'));
 
   if (!name || !subject || !bodyContent) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -418,11 +423,21 @@ app.post('/api/campaigns/:id/send', (req, res) => {
 
   const accountId = campaign.smtp_account_id || 'account1';
   const listId = campaign.list_id || 'list1';
-  const acc = getAccount(accountId);
-  const cfg = getSmtpConfig(accountId);
+  const useAllAccounts = accountId === 'all';
+  const accounts = getAccounts().filter(a => a.email && a.pass);
+  const smtpAccountIds = useAllAccounts
+    ? accounts.map(a => a.id)
+    : [accountId];
 
-  if (!cfg.user || !cfg.pass) {
-    return res.status(400).json({ error: 'SMTP not configured for selected account' });
+  if (useAllAccounts) {
+    if (smtpAccountIds.length === 0) {
+      return res.status(400).json({ error: 'No SMTP accounts configured' });
+    }
+  } else {
+    const cfg = getSmtpConfig(accountId);
+    if (!cfg.user || !cfg.pass) {
+      return res.status(400).json({ error: 'SMTP not configured for selected account' });
+    }
   }
 
   const isFollowUp = campaign.campaign_type === 'follow_up';
@@ -438,24 +453,39 @@ app.post('/api/campaigns/:id/send', (req, res) => {
     });
   }
 
-  const queued = queueCampaign(id, contactIds, { allowResend: isFollowUp });
-  const remaining = store.getRemainingToday(acc.dailyLimit, accountId);
-  const daysNeeded = Math.ceil(queued / acc.dailyLimit);
+  const queued = queueCampaign(id, contactIds, {
+    allowResend: isFollowUp,
+    smtpAccountIds,
+  });
+
+  const totalDaily = useAllAccounts
+    ? accounts.reduce((sum, a) => sum + (a.dailyLimit || 0), 0)
+    : (getAccount(accountId)?.dailyLimit || 490);
+  const remaining = useAllAccounts
+    ? accounts.reduce((sum, a) => sum + store.getRemainingToday(a.dailyLimit, a.id), 0)
+    : store.getRemainingToday(getAccount(accountId).dailyLimit, accountId);
+  const daysNeeded = Math.ceil(queued / Math.max(totalDaily, 1));
   startSender();
 
   const otherActive = store.getCampaigns().filter(c =>
     c.id !== id && ['sending', 'queued'].includes(c.status)
   ).length;
 
+  const viaLabel = useAllAccounts
+    ? `${smtpAccountIds.length} accounts (split evenly)`
+    : (getAccount(accountId)?.email || accountId);
+
   let message;
   if (queued <= remaining) {
     message = otherActive > 0
-      ? `Queued ${queued.toLocaleString()} emails via ${acc.email}. Sending in parallel with other active campaign(s).`
-      : `Queued ${queued.toLocaleString()} emails via ${acc.email}. Sending now...`;
+      ? `Queued ${queued.toLocaleString()} emails via ${viaLabel}. Sending in parallel with other active campaign(s).`
+      : `Queued ${queued.toLocaleString()} emails via ${viaLabel}. Sending now...`;
   } else {
-    message = otherActive > 0
-      ? `Queued ${queued.toLocaleString()} emails via ${acc.email}. Sending ${remaining} today in parallel with other campaign(s), ~${daysNeeded} days at ${acc.dailyLimit}/day on this account.`
-      : `Queued ${queued.toLocaleString()} emails via ${acc.email}. Sending ${remaining} today, ~${daysNeeded} days at ${acc.dailyLimit}/day. Duplicates & bounced addresses skipped.`;
+    message = `Queued ${queued.toLocaleString()} emails via ${viaLabel}. Sending ~${remaining} today, ~${daysNeeded} days at ${totalDaily}/day combined.`;
+  }
+
+  if (isFollowUp) {
+    message += ' Follow-ups use the same sending account as each contact’s first email.';
   }
 
   res.json({
@@ -464,6 +494,7 @@ app.post('/api/campaigns/:id/send', (req, res) => {
     remainingToday: remaining,
     daysNeeded,
     accountId,
+    smtpAccountIds,
     listId,
     message,
   });
@@ -514,7 +545,7 @@ app.post('/api/campaigns/:id/follow-up', (req, res) => {
     body_text: htmlToPlain(body_html),
     preheader: (preheader || '').trim(),
     include_unsubscribe: false,
-    smtp_account_id: parent.smtp_account_id,
+    smtp_account_id: parent.smtp_account_id === 'all' ? 'all' : parent.smtp_account_id,
     list_id: parent.list_id,
     attachment: parent.attachment || null,
     parent_campaign_id: parentId,
@@ -525,7 +556,11 @@ app.post('/api/campaigns/:id/follow-up', (req, res) => {
   const shouldSend = send_now !== false;
   let queued = 0;
   if (shouldSend) {
-    queued = queueCampaign(campaign.id, contactIds, { allowResend: true });
+    const smtpAccountIds = getAccounts().filter(a => a.email && a.pass).map(a => a.id);
+    queued = queueCampaign(campaign.id, contactIds, {
+      allowResend: true,
+      smtpAccountIds,
+    });
     startSender();
   }
 
@@ -535,7 +570,7 @@ app.post('/api/campaigns/:id/follow-up', (req, res) => {
     queued,
     recipients: contactIds.length,
     message: shouldSend
-      ? `Follow-up campaign created and queued to ${queued.toLocaleString()} successful recipients from campaign #${parentId}.`
+      ? `Follow-up queued to ${queued.toLocaleString()} recipients from campaign #${parentId}. Each follow-up sends from the same account as the first email.`
       : `Follow-up draft created for ${contactIds.length.toLocaleString()} successful recipients. Open Campaigns to send.`,
   });
 });
