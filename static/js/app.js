@@ -561,17 +561,20 @@ function getSelectedAccount() {
   return accountsData.find(a => a.id === selectedAccountId) || accountsData[0];
 }
 
+function countActiveContacts(listsMap, listId) {
+  const lists = listsMap || {};
+  if (!listId || listId === 'all') {
+    return Object.values(lists).reduce((s, l) => s + (l.active || 0), 0);
+  }
+  return (lists[listId] || {}).active || 0;
+}
+
 async function updateComposeMeta() {
   const acc = getSelectedAccount();
   if (!acc) return;
   document.getElementById('composeFrom').textContent = acc.email;
   const lists = await api('/accounts');
-  let active = 0;
-  if (acc.id === 'all') {
-    active = Object.values(lists.lists || {}).reduce((s, l) => s + (l.active || 0), 0);
-  } else {
-    active = (lists.lists[acc.listId] || {}).active || 0;
-  }
+  const active = countActiveContacts(lists.lists, acc.listId);
   document.getElementById('composeContactCount').textContent = `${active.toLocaleString()} eligible`;
   document.getElementById('composeTo').textContent = active > 0
     ? `${acc.listLabel} (${active.toLocaleString()} contacts, duplicates skipped)`
@@ -579,7 +582,7 @@ async function updateComposeMeta() {
   const hint = document.getElementById('accountHint');
   if (hint) {
     if (acc.id === 'all') {
-      hint.textContent = `Split evenly across ${accountsData.length} inboxes. Follow-ups reuse the same inbox that sent the first email.`;
+      hint.textContent = `Split evenly across ${accountsData.length} inboxes. Contacts from every list are included. Follow-ups reuse the same inbox per contact.`;
     } else {
       hint.textContent = acc.protected
         ? `Protected: ${acc.dailyLimit}/day max, ${acc.sendDelayMs / 1000}s between sends, extended pause on blocks`
@@ -942,7 +945,7 @@ async function saveCampaign(andSend) {
   }
 
   const data = getComposeFormData();
-  const name = 'Ahmad Yaseen - Senior Software Developer (IoT, AI, Embedded, Full Stack)';
+  const name = document.getElementById('campaignName')?.value.trim() || 'Clipzy — YouTuber outreach';
 
   if (!data.subject || !getEditorText()) {
     toast('Click "Load Default Email" first', 'error');
@@ -951,15 +954,15 @@ async function saveCampaign(andSend) {
 
   const acc = getSelectedAccount();
   const lists = await api('/accounts');
-  const listCounts = lists.lists[acc?.listId] || { active: 0 };
+  const activeCount = countActiveContacts(lists.lists, acc?.listId);
 
-  if (andSend && listCounts.active === 0) {
-    toast(`Upload contacts to ${acc?.listLabel || 'the list'} first`, 'error');
+  if (andSend && activeCount === 0) {
+    toast('Upload contacts in the Contacts tab first', 'error');
     showPage('contacts');
     return;
   }
 
-  if (andSend && !confirm(`Send campaign from ${acc?.email} to ${listCounts.active.toLocaleString()} contacts on ${acc?.listLabel}?\n\nDuplicates & bounced addresses will be skipped.\nLimit: ${acc?.dailyLimit}/day`)) {
+  if (andSend && !confirm(`Send campaign from ${acc?.email} to ${activeCount.toLocaleString()} contacts?\n\nDuplicates & bounced addresses will be skipped.\nLimit: ${acc?.dailyLimit}/day`)) {
     return;
   }
 
