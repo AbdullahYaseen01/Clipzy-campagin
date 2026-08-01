@@ -42,11 +42,16 @@ function loadAccounts() {
   const account1 = buildAccount({
     id: 'account1',
     listId: 'list1',
-    label: 'Email 1 — Primary',
+    label: process.env.SMTP_ACCOUNT_1_LABEL || 'Email 1 — Primary',
     listLabel: 'Data List 1',
     email: process.env.SMTP_ACCOUNT_1_USER || process.env.SMTP_USER,
     pass: process.env.SMTP_ACCOUNT_1_PASS || process.env.SMTP_PASS,
-    fromName: process.env.SMTP_ACCOUNT_1_FROM_NAME || process.env.SMTP_FROM_NAME || 'Ahmad Yaseen',
+    fromName: process.env.SMTP_ACCOUNT_1_FROM_NAME || process.env.SMTP_FROM_NAME || 'Clipzy',
+    host: process.env.SMTP_ACCOUNT_1_HOST || process.env.SMTP_HOST,
+    port: process.env.SMTP_ACCOUNT_1_PORT ? parseInt(process.env.SMTP_ACCOUNT_1_PORT, 10) : undefined,
+    secure: process.env.SMTP_ACCOUNT_1_SECURE != null
+      ? process.env.SMTP_ACCOUNT_1_SECURE !== 'false'
+      : undefined,
     dailyLimit: parseInt(process.env.SMTP_ACCOUNT_1_DAILY_LIMIT || process.env.DAILY_LIMIT || '490', 10),
     sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_1_DELAY_MS || process.env.SEND_DELAY_MS || '5000', 10),
     protected: false,
@@ -56,14 +61,19 @@ function loadAccounts() {
   const account2 = buildAccount({
     id: 'account2',
     listId: 'list2',
-    label: 'Email 2 — Protected',
-    listLabel: 'Data List 2 (10k)',
+    label: process.env.SMTP_ACCOUNT_2_LABEL || 'Email 2 — Outreach',
+    listLabel: 'Data List 2',
     email: process.env.SMTP_ACCOUNT_2_USER,
     pass: process.env.SMTP_ACCOUNT_2_PASS,
-    fromName: process.env.SMTP_ACCOUNT_2_FROM_NAME || 'Ahmad Yaseen',
+    fromName: process.env.SMTP_ACCOUNT_2_FROM_NAME || 'Clipzy',
+    host: process.env.SMTP_ACCOUNT_2_HOST || process.env.SMTP_HOST,
+    port: process.env.SMTP_ACCOUNT_2_PORT ? parseInt(process.env.SMTP_ACCOUNT_2_PORT, 10) : undefined,
+    secure: process.env.SMTP_ACCOUNT_2_SECURE != null
+      ? process.env.SMTP_ACCOUNT_2_SECURE !== 'false'
+      : undefined,
     dailyLimit: parseInt(process.env.SMTP_ACCOUNT_2_DAILY_LIMIT || '490', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_2_DELAY_MS || '8000', 10),
-    protected: true,
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_2_DELAY_MS || '5000', 10),
+    protected: false,
   });
   if (account2) accounts.push(account2);
 
