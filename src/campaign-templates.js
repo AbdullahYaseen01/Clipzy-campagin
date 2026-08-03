@@ -2,7 +2,7 @@ const SITE_URL = 'https://clipzy.xynovix.com/';
 
 const DEFAULT_EMAIL = {
   id: 'default',
-  version: 20,
+  version: 21,
   name: 'Clipzy — YouTuber outreach',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -12,7 +12,7 @@ const DEFAULT_EMAIL = {
 
 <p>This is a problem we hear from creators every week. You film a strong long-form video — then another round of work starts: finding the best moments, cutting short clips, writing captions, and rewriting the same ideas for different platforms.</p>
 
-<p><strong>Clipzy’s purpose is simple:</strong> turn <strong>one long-form video</strong> into short clips, captions, social posts, and show notes — all from <strong>one studio</strong>.</p>
+<p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes — all from <b>one studio</b>.</p>
 
 <p>Upload once. Leave with content ready for Shorts, Reels, TikTok, and your social posts, plus show notes for the main video. Less rebuilding after every upload. More reach from the same filming time.</p>
 
@@ -43,7 +43,7 @@ The Clipzy Team</p>`,
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 9,
+  version: 10,
   name: 'Clipzy — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -51,7 +51,7 @@ const FOLLOW_UP_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>I wanted to follow up briefly on my earlier note. <strong>Clipzy’s purpose is simple:</strong> take <strong>one long-form video</strong> and turn it into short clips, captions, posts, and show notes in <strong>one studio</strong> — without doing all of that by hand after every upload.</p>
+<p>I wanted to follow up briefly on my earlier note. <b>Clipzy's purpose is simple:</b> take <b>one long-form video</b> and turn it into short clips, captions, posts, and show notes in <b>one studio</b> — without doing all of that by hand after every upload.</p>
 
 <p>If that seems useful for your content process, the studio is here:</p>
 

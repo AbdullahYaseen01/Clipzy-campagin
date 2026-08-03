@@ -80,7 +80,7 @@ function validateCampaign({ subject, bodyHtml, preheader = '' }) {
   const linkCount = (bodyHtml.match(/<a\s|https?:\/\//gi) || []).length;
   if (linkCount > 1) warnings.push(`${linkCount} links detected — plain text URLs are safer than clickable links`);
 
-  const strongCount = (bodyHtml.match(/<strong>|<b>/gi) || []).length;
+  const strongCount = (bodyHtml.match(/<\/(?:strong|b)>/gi) || []).length;
   // Allow a few product-emphasis bolds; more than 4 starts to look promotional
   if (strongCount > 4) warnings.push('Too much bold text — plain emails look more personal');
 

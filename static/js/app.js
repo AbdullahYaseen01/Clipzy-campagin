@@ -37,6 +37,14 @@ function getEditorText() {
   return quillEditor ? quillEditor.getText().trim() : '';
 }
 
+/** Load HTML into Quill without stripping bold/links (root.innerHTML is unreliable). */
+function setEditorHtml(html) {
+  if (!quillEditor) return;
+  const safe = html || '';
+  quillEditor.setContents([]);
+  quillEditor.clipboard.dangerouslyPasteHTML(0, safe);
+}
+
 function insertAtCursor(text) {
   if (!quillEditor) return;
   const range = quillEditor.getSelection(true);
@@ -822,7 +830,7 @@ async function dashPreviewTest() {
     });
     showPage('compose');
     document.getElementById('campaignSubject').value = content.subject;
-    if (quillEditor) quillEditor.root.innerHTML = content.body;
+    setEditorHtml(content.body);
     previewSampleContact = sample;
     document.getElementById('previewFrom').textContent = `${preview.fromName} <${preview.from}>`;
     document.getElementById('previewTo').textContent = sample.email;
@@ -867,17 +875,19 @@ function fillManualTestDefaults(sample) {
   }
 }
 
-async function loadDefaultEmail(silent = false) {
+async function loadDefaultEmail(silent = false, force = false) {
   try {
     const tpl = await api('/campaigns/templates/default');
-    const needsReload = !templateLoaded || (tpl.version && tpl.version !== loadedTemplateVersion);
+    const needsReload = force
+      || !templateLoaded
+      || (tpl.version && tpl.version !== loadedTemplateVersion);
     if (!needsReload && getEditorText()) {
       await updatePreview();
       return;
     }
     document.getElementById('campaignSubject').value = tpl.subject;
     document.getElementById('campaignPreheader').value = tpl.preheader || '';
-    if (quillEditor) quillEditor.root.innerHTML = tpl.body_html;
+    setEditorHtml(tpl.body_html);
     document.getElementById('campaignName').value = tpl.name;
     previewSampleContact = tpl.sample_contact || null;
     fillManualTestDefaults(tpl.sample_contact);
@@ -940,8 +950,22 @@ async function saveCampaign(andSend) {
     await saveCampaignEdits(andSend);
     return;
   }
-  if (!templateLoaded && !getEditorText()) {
-    await loadDefaultEmail(true);
+
+  // Always pull latest Clipzy template so bold + copy survive Quill/editor cache
+  try {
+    const tpl = await api('/campaigns/templates/default');
+    if (tpl?.body_html) {
+      setEditorHtml(tpl.body_html);
+      document.getElementById('campaignSubject').value = tpl.subject;
+      document.getElementById('campaignPreheader').value = tpl.preheader || '';
+      document.getElementById('campaignName').value = tpl.name || 'Clipzy — YouTuber outreach';
+      templateLoaded = true;
+      loadedTemplateVersion = tpl.version || 0;
+    }
+  } catch {
+    if (!templateLoaded && !getEditorText()) {
+      await loadDefaultEmail(true, true);
+    }
   }
 
   const data = getComposeFormData();
@@ -951,6 +975,13 @@ async function saveCampaign(andSend) {
     toast('Click "Load Default Email" first', 'error');
     return;
   }
+
+  // Prefer server template HTML so <strong> is never stripped by the editor
+  let bodyHtml = data.body;
+  try {
+    const tpl = await api('/campaigns/templates/default');
+    if (tpl?.body_html) bodyHtml = tpl.body_html;
+  } catch { /* keep editor body */ }
 
   const acc = getSelectedAccount();
   const lists = await api('/accounts');
@@ -968,7 +999,7 @@ async function saveCampaign(andSend) {
 
   const validation = await api('/campaigns/validate', {
     method: 'POST',
-    body: JSON.stringify({ subject: data.subject, body: data.body, preheader: data.preheader }),
+    body: JSON.stringify({ subject: data.subject, body: bodyHtml, preheader: data.preheader }),
   });
 
   if (!validation.valid) {
@@ -976,7 +1007,7 @@ async function saveCampaign(andSend) {
     return;
   }
 
-  const formData = buildFormData({ ...data, name });
+  const formData = buildFormData({ ...data, body: bodyHtml, name });
 
   try {
     const res = await fetch('/api/campaigns', { method: 'POST', body: formData });
@@ -1245,7 +1276,7 @@ async function editCampaign(id) {
     document.getElementById('campaignSubject').value = campaign.subject || '';
     document.getElementById('campaignPreheader').value = campaign.preheader || '';
     document.getElementById('includeUnsubscribe').checked = campaign.include_unsubscribe === true;
-    if (quillEditor) quillEditor.root.innerHTML = campaign.body_html || '';
+    setEditorHtml(campaign.body_html || '');
 
     if (campaign.smtp_account_id) {
       selectedAccountId = campaign.smtp_account_id;
