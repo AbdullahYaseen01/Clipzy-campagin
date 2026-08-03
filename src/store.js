@@ -785,7 +785,7 @@ function saveSmtpAccount(account) {
       fromName: account.fromName || account.email?.split('@')[0] || '',
       pass: account.pass && account.pass !== '••••••••' ? account.pass.replace(/\s/g, '') : undefined,
       listId: account.listId || 'list1',
-      dailyLimit: parseInt(account.dailyLimit, 10) || 490,
+      dailyLimit: parseInt(account.dailyLimit, 10) || 900,
       sendDelayMs: parseInt(account.sendDelayMs, 10) || 5000,
       verified: !!account.verified,
       updated_at: now(),

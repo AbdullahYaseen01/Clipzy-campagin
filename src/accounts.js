@@ -46,14 +46,14 @@ function loadAccounts() {
     listLabel: 'Data List 1',
     email: process.env.SMTP_ACCOUNT_1_USER || process.env.SMTP_USER,
     pass: process.env.SMTP_ACCOUNT_1_PASS || process.env.SMTP_PASS,
-    fromName: process.env.SMTP_ACCOUNT_1_FROM_NAME || process.env.SMTP_FROM_NAME || 'Clipzy',
+    fromName: process.env.SMTP_ACCOUNT_1_FROM_NAME || process.env.SMTP_FROM_NAME || 'The Clipzy Team',
     host: process.env.SMTP_ACCOUNT_1_HOST || process.env.SMTP_HOST,
     port: process.env.SMTP_ACCOUNT_1_PORT ? parseInt(process.env.SMTP_ACCOUNT_1_PORT, 10) : undefined,
     secure: process.env.SMTP_ACCOUNT_1_SECURE != null
       ? process.env.SMTP_ACCOUNT_1_SECURE !== 'false'
       : undefined,
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_1_DAILY_LIMIT || process.env.DAILY_LIMIT || '490', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_1_DELAY_MS || process.env.SEND_DELAY_MS || '5000', 10),
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_1_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_1_DELAY_MS || process.env.SEND_DELAY_MS || '8000', 10),
     protected: false,
   });
   if (account1) accounts.push(account1);
@@ -65,14 +65,14 @@ function loadAccounts() {
     listLabel: 'Data List 2',
     email: process.env.SMTP_ACCOUNT_2_USER,
     pass: process.env.SMTP_ACCOUNT_2_PASS,
-    fromName: process.env.SMTP_ACCOUNT_2_FROM_NAME || 'Clipzy',
+    fromName: process.env.SMTP_ACCOUNT_2_FROM_NAME || 'The Clipzy Team',
     host: process.env.SMTP_ACCOUNT_2_HOST || process.env.SMTP_HOST,
     port: process.env.SMTP_ACCOUNT_2_PORT ? parseInt(process.env.SMTP_ACCOUNT_2_PORT, 10) : undefined,
     secure: process.env.SMTP_ACCOUNT_2_SECURE != null
       ? process.env.SMTP_ACCOUNT_2_SECURE !== 'false'
       : undefined,
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_2_DAILY_LIMIT || '490', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_2_DELAY_MS || '5000', 10),
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_2_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_2_DELAY_MS || '8000', 10),
     protected: false,
   });
   if (account2) accounts.push(account2);
@@ -84,12 +84,12 @@ function loadAccounts() {
     listLabel: 'Data List 3',
     email: process.env.SMTP_ACCOUNT_3_USER,
     pass: process.env.SMTP_ACCOUNT_3_PASS,
-    fromName: process.env.SMTP_ACCOUNT_3_FROM_NAME,
+    fromName: process.env.SMTP_ACCOUNT_3_FROM_NAME || 'The Clipzy Team',
     host: process.env.SMTP_ACCOUNT_3_HOST || 'smtp.hostinger.com',
     port: parseInt(process.env.SMTP_ACCOUNT_3_PORT || '465', 10),
     secure: process.env.SMTP_ACCOUNT_3_SECURE !== 'false',
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_3_DAILY_LIMIT || '490', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_3_DELAY_MS || '5000', 10),
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_3_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_3_DELAY_MS || '8000', 10),
     protected: false,
   });
   if (account3) accounts.push(account3);
@@ -101,12 +101,12 @@ function loadAccounts() {
     listLabel: 'Data List 4',
     email: process.env.SMTP_ACCOUNT_4_USER,
     pass: process.env.SMTP_ACCOUNT_4_PASS,
-    fromName: process.env.SMTP_ACCOUNT_4_FROM_NAME,
+    fromName: process.env.SMTP_ACCOUNT_4_FROM_NAME || 'The Clipzy Team',
     host: process.env.SMTP_ACCOUNT_4_HOST || 'smtp.hostinger.com',
     port: parseInt(process.env.SMTP_ACCOUNT_4_PORT || '465', 10),
     secure: process.env.SMTP_ACCOUNT_4_SECURE !== 'false',
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_4_DAILY_LIMIT || '490', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_4_DELAY_MS || '5000', 10),
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_4_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_4_DELAY_MS || '8000', 10),
     protected: false,
   });
   if (account4) accounts.push(account4);
@@ -118,12 +118,12 @@ function loadAccounts() {
     listLabel: 'Data List 5',
     email: process.env.SMTP_ACCOUNT_5_USER,
     pass: process.env.SMTP_ACCOUNT_5_PASS,
-    fromName: process.env.SMTP_ACCOUNT_5_FROM_NAME,
+    fromName: process.env.SMTP_ACCOUNT_5_FROM_NAME || 'The Clipzy Team',
     host: process.env.SMTP_ACCOUNT_5_HOST || 'smtp.hostinger.com',
     port: parseInt(process.env.SMTP_ACCOUNT_5_PORT || '465', 10),
     secure: process.env.SMTP_ACCOUNT_5_SECURE !== 'false',
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_5_DAILY_LIMIT || '490', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_5_DELAY_MS || '5000', 10),
+    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_5_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
+    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_5_DELAY_MS || '8000', 10),
     protected: false,
   });
   if (account5) accounts.push(account5);
