@@ -2,7 +2,7 @@ const SITE_URL = 'https://clipzy.xynovix.com/';
 
 const DEFAULT_EMAIL = {
   id: 'default',
-  version: 21,
+  version: 22,
   name: 'Clipzy — YouTuber outreach',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -13,6 +13,8 @@ const DEFAULT_EMAIL = {
 <p>This is a problem we hear from creators every week. You film a strong long-form video — then another round of work starts: finding the best moments, cutting short clips, writing captions, and rewriting the same ideas for different platforms.</p>
 
 <p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes — all from <b>one studio</b>.</p>
+
+<p>You can also <b>go live and record podcasts</b> right from Clipzy — host and guests in the browser, then leave with clips, captions, and show notes from the same session.</p>
 
 <p>Upload once. Leave with content ready for Shorts, Reels, TikTok, and your social posts, plus show notes for the main video. Less rebuilding after every upload. More reach from the same filming time.</p>
 
@@ -43,7 +45,7 @@ The Clipzy Team</p>`,
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 11,
+  version: 12,
   name: 'Clipzy — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -53,7 +55,9 @@ const FOLLOW_UP_EMAIL = {
 
 <p>I wanted to follow up on my earlier note in case it got buried. Many creators tell us the hard part is not filming — it is everything that comes after: clips, captions, and posts for every platform.</p>
 
-<p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes inside <b>one studio</b>.</p>
+<p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes — all from <b>one studio</b>.</p>
+
+<p>You can also <b>go live and record podcasts</b> right from Clipzy — host and guests in the browser, then leave with clips, captions, and show notes from the same session.</p>
 
 <p>That means less manual editing after each upload, and more content from the videos you already make. If that would help your channel, you can see the workflow here:</p>
 
