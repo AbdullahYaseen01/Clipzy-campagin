@@ -444,12 +444,13 @@
           <div class="toolbar">
             <input type="text" id="contactSearch" placeholder="Search contacts..." class="search-input">
             <label class="btn btn-primary file-btn" id="uploadBtnLabel">
-              Upload to List
+              Upload &amp; split evenly
               <input type="file" id="csvUpload" accept=".csv,.xlsx,.xls" hidden>
             </label>
             <button class="btn" id="addContactBtn">+ Add Contact</button>
             <button class="btn btn-danger btn-sm" id="clearContacts">Clear List</button>
           </div>
+          <p class="hint" id="uploadSplitHint" style="margin:8px 0 0;">Uploads split evenly across both lists so each inbox sends the same volume.</p>
 
           <div class="table-wrap">
             <table>

@@ -16,13 +16,13 @@ function htmlToPlain(html) {
 }
 
 function wrapHtmlEmail(htmlBody, { preheader = '', fromEmail = '' } = {}) {
-  // Personal 1:1 style — no newsletter chrome, no hidden preheader tricks (those hurt spam scores)
+  // Standard email style (sans-serif) — looks like a normal inbox message
   void preheader;
   const footer = fromEmail
-    ? `<p style="margin:18px 0 0;font-size:12px;color:#666;">If this is not useful, just reply and I will not follow up.</p>`
+    ? `<p style="margin:18px 0 0;font-size:12px;color:#666;font-family:Arial,Helvetica,sans-serif;">If this is not useful, just reply and I will not follow up.</p>`
     : '';
 
-  return `<div style="font-family:Georgia,serif;font-size:15px;line-height:1.5;color:#222222;">${htmlBody}${footer}</div>`;
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222222;">${htmlBody}${footer}</div>`;
 }
 
 const SPAM_WORDS = [

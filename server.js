@@ -161,11 +161,24 @@ app.get('/api/contacts', (req, res) => {
 });
 
 app.post('/api/contacts', (req, res) => {
-  const { email, name, first_name, last_name, company, title, website, linkedin, list_id } = req.body;
+  const { email, name, first_name, last_name, company, title, website, linkedin, list_id, split } = req.body;
   if (!email) return res.status(400).json({ error: 'Email is required' });
-  const listId = list_id || 'list1';
 
   try {
+    const accounts = getAccounts();
+    const shouldSplit = split !== false && accounts.length > 1;
+    if (shouldSplit) {
+      // Put single contact on the currently smaller list for balance
+      const counts = store.getAllListCounts();
+      const sorted = accounts
+        .map((a) => ({ id: a.listId, active: counts[a.listId]?.active || 0 }))
+        .sort((a, b) => a.active - b.active);
+      const listId = sorted[0]?.id || list_id || 'list1';
+      const contact = store.addContact(email, { name, first_name, last_name, company, title, website, linkedin }, listId);
+      return res.json({ ...contact, split: true });
+    }
+
+    const listId = list_id || 'list1';
     const contact = store.addContact(email, { name, first_name, last_name, company, title, website, linkedin }, listId);
     res.json(contact);
   } catch (err) {
@@ -179,6 +192,7 @@ app.post('/api/contacts', (req, res) => {
 app.post('/api/contacts/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const listId = req.body.list_id || 'list1';
+  const splitRequested = req.body.split !== 'false' && req.body.split !== false;
 
   try {
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -198,6 +212,26 @@ app.post('/api/contacts/upload', upload.single('file'), (req, res) => {
       return res.status(400).json({ error: 'No valid email addresses found in file' });
     }
 
+    const accounts = getAccounts();
+    const listIds = accounts.map((a) => a.listId).filter(Boolean);
+    const doSplit = splitRequested && listIds.length > 1;
+
+    if (doSplit) {
+      const result = store.addContactsBulkSplit(rows, listIds);
+      const breakdown = listIds.map((id) => {
+        const acc = getAccountByList(id);
+        return `${acc?.listLabel || id}: ${result.perList?.[id] || 0}`;
+      }).join(' · ');
+      return res.json({
+        ...result,
+        total: rows.length,
+        split: true,
+        listId: 'split',
+        listLabel: `Split evenly (${breakdown})`,
+        message: `Split across ${listIds.length} lists — ${breakdown}`,
+      });
+    }
+
     const result = store.addContactsBulk(rows, listId);
     const acc = getAccountByList(listId);
     res.json({
@@ -205,6 +239,7 @@ app.post('/api/contacts/upload', upload.single('file'), (req, res) => {
       total: rows.length,
       listId,
       listLabel: acc?.listLabel || listId,
+      split: false,
     });
   } catch (err) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);

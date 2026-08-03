@@ -151,6 +151,75 @@ function addContactsBulk(rows, listId = 'list1') {
   return { added, skipped, listId };
 }
 
+/** Round-robin contacts across multiple lists so each sender inbox gets an equal share. */
+function addContactsBulkSplit(rows, listIds = ['list1']) {
+  const ids = (listIds || []).filter(Boolean);
+  if (ids.length <= 1) return { ...addContactsBulk(rows, ids[0] || 'list1'), perList: {} };
+
+  const BATCH = 500;
+  let added = 0;
+  let skipped = 0;
+  let rotate = 0;
+  const perList = Object.fromEntries(ids.map((id) => [id, 0]));
+
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
+    const result = withStore((data) => {
+      let bAdded = 0;
+      let bSkipped = 0;
+      const bPerList = Object.fromEntries(ids.map((id) => [id, 0]));
+
+      for (const row of batch) {
+        const { email, name, first_name, last_name, company, title, website, linkedin } = row;
+        if (!email || !email.includes('@')) {
+          bSkipped++;
+          continue;
+        }
+        const emailLower = email.toLowerCase();
+        // Skip if this email already exists in any of the target lists
+        const existsAnywhere = data.contacts.some(
+          (c) => c.email.toLowerCase() === emailLower && ids.includes(c.list_id)
+        );
+        if (existsAnywhere) {
+          bSkipped++;
+          continue;
+        }
+
+        const listId = ids[rotate % ids.length];
+        rotate += 1;
+
+        data.contacts.push({
+          id: nextId(data, 'contacts'),
+          email,
+          name: name || [first_name, last_name].filter(Boolean).join(' '),
+          first_name: first_name || '',
+          last_name: last_name || '',
+          company: company || '',
+          title: title || '',
+          website: website || '',
+          linkedin: linkedin || '',
+          city: row.city || '',
+          country: row.country || '',
+          industry: row.industry || '',
+          company_profile: row.company_profile || '',
+          list_id: listId,
+          status: 'active',
+          created_at: now(),
+        });
+        bAdded++;
+        bPerList[listId] += 1;
+      }
+      return { added: bAdded, skipped: bSkipped, perList: bPerList, rotate };
+    });
+    added += result.added;
+    skipped += result.skipped;
+    rotate = result.rotate;
+    for (const id of ids) perList[id] += result.perList[id] || 0;
+  }
+
+  return { added, skipped, listId: 'split', perList, listIds: ids };
+}
+
 function deleteContact(id) {
   withStore((data) => { data.contacts = data.contacts.filter(c => c.id !== id); });
 }
@@ -1011,7 +1080,7 @@ function markBounce(email, reason = 'Delivery failed') {
 }
 
 module.exports = {
-  getContacts, addContact, addContactsBulk, deleteContact, deleteAllContacts,
+  getContacts, addContact, addContactsBulk, addContactsBulkSplit, deleteContact, deleteAllContacts,
   getActiveContactIds, getEligibleContactIds, getSuccessfulContactIds, getSentAccountForContact,
   getCampaignSentCount, getContactCounts, getAllListCounts,
   suppressContact, getSentEmailsForList,

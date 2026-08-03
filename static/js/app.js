@@ -1063,7 +1063,13 @@ function renderListSummary(lists) {
   el.innerHTML = `<strong>${acc?.listLabel || selectedListId}</strong> → sends via <strong>${acc?.email || '—'}</strong>
     · ${c.active.toLocaleString()} active · ${c.bounced || 0} bounced · ${c.blocked || 0} blocked · ${c.total.toLocaleString()} total`;
   const uploadLabel = document.getElementById('uploadBtnLabel');
-  if (uploadLabel) uploadLabel.childNodes[0].textContent = `Upload to ${acc?.listLabel || 'List'} `;
+  if (uploadLabel) uploadLabel.childNodes[0].textContent = `Upload & split evenly `;
+  const hint = document.getElementById('uploadSplitHint');
+  if (hint) {
+    hint.textContent = accountsData.length > 1
+      ? `Uploads split evenly across ${accountsData.length} lists so each inbox sends the same volume.`
+      : '';
+  }
 }
 
 async function loadContacts(page = 1) {
@@ -1121,13 +1127,22 @@ document.getElementById('csvUpload').addEventListener('change', async (e) => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('list_id', selectedListId);
+  // Split evenly across all sender lists (equal volume per inbox)
+  formData.append('split', 'true');
 
   try {
     const res = await fetch('/api/contacts/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
-    toast(`Added ${data.added.toLocaleString()} to ${data.listLabel || selectedListId} (${data.skipped} duplicates skipped)`);
+    const msg = data.split && data.message
+      ? `Added ${data.added.toLocaleString()} contacts — ${data.message} (${data.skipped} skipped)`
+      : `Added ${data.added.toLocaleString()} to ${data.listLabel || selectedListId} (${data.skipped} duplicates skipped)`;
+    toast(msg);
     document.getElementById('step2')?.classList.add('done');
+    // Refresh list tabs + current table
+    const accounts = await loadAccounts();
+    renderListTabs(accountsData, accounts.lists || {});
+    renderListSummary(accounts.lists || {});
     loadContacts();
   } catch (err) {
     toast(err.message, 'error');
@@ -1149,10 +1164,16 @@ document.getElementById('addContactForm').addEventListener('submit', async (e) =
   const name = document.getElementById('newContactName').value.trim();
 
   try {
-    await api('/contacts', { method: 'POST', body: JSON.stringify({ email, name, list_id: selectedListId }) });
-    toast('Contact added');
+    const contact = await api('/contacts', {
+      method: 'POST',
+      body: JSON.stringify({ email, name, list_id: selectedListId, split: true }),
+    });
+    toast(`Contact added to ${contact.list_id || 'list'} (balanced)`);
     document.getElementById('addContactModal').classList.add('hidden');
     document.getElementById('addContactForm').reset();
+    const accounts = await loadAccounts();
+    renderListTabs(accountsData, accounts.lists || {});
+    renderListSummary(accounts.lists || {});
     loadContacts();
   } catch (err) {
     toast(err.message, 'error');
