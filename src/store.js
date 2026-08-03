@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { dataDir } = require('./paths');
+const { dataDir, isServerless } = require('./paths');
+const { downloadStore, uploadStore, getPersistMode, hasBlobToken } = require('./remote-persist');
 
 const dbPath = path.join(dataDir, 'store.json');
 
@@ -9,19 +10,107 @@ const empty = () => ({
   campaigns: [],
   send_queue: [],
   send_log: [],
-  meta: { userStoppedSender: false, lastDailyLimitAt: null },
+  meta: { userStoppedSender: false, lastDailyLimitAt: null, storeVersion: 0 },
   _counters: { contacts: 0, campaigns: 0, send_queue: 0, send_log: 0, replies: 0 },
   replies: [],
 });
 
-function load() {
-  if (!fs.existsSync(dbPath)) return empty();
+let memory = null;
+let loadedVersion = 0;
+let loadedAt = 0;
+let persistPromise = Promise.resolve();
+let hydrating = null;
+
+function loadFromFile() {
+  if (!fs.existsSync(dbPath)) return null;
   try {
-    const data = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-    return migrateData(data);
+    return migrateData(JSON.parse(fs.readFileSync(dbPath, 'utf-8')));
   } catch {
-    return empty();
+    return null;
   }
+}
+
+function saveToFile(data) {
+  try {
+    fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('[store] Failed to write local store:', err.message);
+  }
+}
+
+function load() {
+  if (memory) return memory;
+  memory = loadFromFile() || empty();
+  loadedVersion = memory.meta?.storeVersion || 0;
+  loadedAt = Date.now();
+  return memory;
+}
+
+async function ensureFresh(force = false) {
+  if (!isServerless) {
+    if (!memory) load();
+    return memory;
+  }
+
+  if (hydrating) {
+    await hydrating;
+    return memory;
+  }
+
+  const now = Date.now();
+  if (!force && memory && now - loadedAt < 1200) return memory;
+
+  hydrating = (async () => {
+    if (hasBlobToken()) {
+      const remote = await downloadStore();
+      if (remote) {
+        const remoteVersion = remote.meta?.storeVersion || 0;
+        if (!memory || remoteVersion >= loadedVersion) {
+          memory = migrateData(remote);
+          loadedVersion = remoteVersion;
+          saveToFile(memory);
+        }
+      } else if (!memory) {
+        memory = loadFromFile() || empty();
+        loadedVersion = memory.meta?.storeVersion || 0;
+      }
+    } else if (!memory) {
+      memory = loadFromFile() || empty();
+      loadedVersion = memory.meta?.storeVersion || 0;
+    }
+    loadedAt = Date.now();
+  })();
+
+  try {
+    await hydrating;
+  } finally {
+    hydrating = null;
+  }
+  return memory;
+}
+
+function scheduleRemoteSave(data) {
+  if (!hasBlobToken()) return;
+  const snapshot = JSON.parse(JSON.stringify(data));
+  persistPromise = persistPromise
+    .then(() => uploadStore(snapshot))
+    .catch((err) => console.error('[store] Remote persist failed:', err.message));
+}
+
+async function flushPersist() {
+  await persistPromise;
+}
+
+function getStorageInfo() {
+  const info = getPersistMode(isServerless);
+  return {
+    ...info,
+    storeVersion: memory?.meta?.storeVersion || loadedVersion || 0,
+    contacts: memory?.contacts?.length || 0,
+    sendLog: memory?.send_log?.length || 0,
+    pendingQueue: memory?.send_queue?.filter(q => q.status === 'pending').length || 0,
+    serverless: isServerless,
+  };
 }
 
 function migrateData(data) {
@@ -41,7 +130,14 @@ function migrateData(data) {
 }
 
 function save(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
+  if (!data.meta) data.meta = {};
+  data.meta.storeVersion = (data.meta.storeVersion || 0) + 1;
+  data.meta.updatedAt = new Date().toISOString();
+  memory = data;
+  loadedVersion = data.meta.storeVersion;
+  loadedAt = Date.now();
+  saveToFile(data);
+  scheduleRemoteSave(data);
 }
 
 function now() {
@@ -1094,4 +1190,5 @@ module.exports = {
   getLeadProviderKeys, getLeadProviderKey, setLeadProviderKey,
   getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, deleteSavedSmtpAccount,
   getQueueProgress, resumeSendingCampaigns, getAnalytics, markReply, markBounce,
+  ensureFresh, flushPersist, getStorageInfo,
 };

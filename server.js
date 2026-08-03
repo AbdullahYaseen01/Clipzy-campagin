@@ -17,6 +17,7 @@ const {
   resetTransporter,
   startSender,
   stopSender,
+  runSenderTick,
   getSenderStatus,
   getAccountStatuses,
   queueCampaign,
@@ -51,6 +52,16 @@ function toHtmlBody(body) {
 }
 
 app.use(express.json({ limit: '5mb' }));
+
+// Keep store hydrated from durable Blob on every serverless request
+app.use(async (req, res, next) => {
+  try {
+    await store.ensureFresh();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'static', 'login.html'));
@@ -113,11 +124,12 @@ app.get('/api/stats', (req, res) => {
     lists: store.getAllListCounts(),
     contacts: store.getContactCounts(),
     campaigns: store.getCampaignStatusCounts(),
-    recentLogs: store.getRecentLogs(20),
+    recentLogs: store.getRecentLogs(50),
     last7Days: store.getLast7Days(),
     dailyLimit: DAILY_LIMIT,
     progress: store.getQueueProgress(),
     analytics: store.getAnalytics(),
+    storage: store.getStorageInfo(),
   });
 });
 
@@ -448,7 +460,7 @@ app.put('/api/campaigns/:id', attachmentUpload.single('attachment'), (req, res) 
   });
 });
 
-app.post('/api/campaigns/:id/send', (req, res) => {
+app.post('/api/campaigns/:id/send', async (req, res) => {
   const id = parseInt(req.params.id);
   const campaign = store.getCampaign(id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -501,6 +513,14 @@ app.post('/api/campaigns/:id/send', (req, res) => {
     : store.getRemainingToday(getAccount(accountId).dailyLimit, accountId);
   const daysNeeded = Math.ceil(queued / Math.max(totalDaily, 1));
   startSender();
+  let tickResult = null;
+  if (isServerless) {
+    try {
+      tickResult = await runSenderTick({ force: true });
+    } catch (err) {
+      console.error('Initial send tick failed:', err.message);
+    }
+  }
 
   const otherActive = store.getCampaigns().filter(c =>
     c.id !== id && ['sending', 'queued'].includes(c.status)
@@ -522,6 +542,9 @@ app.post('/api/campaigns/:id/send', (req, res) => {
   if (isFollowUp) {
     message += ' Follow-ups use the same sending account as each contact’s first email.';
   }
+  if (isServerless) {
+    message += ' Keep the Dashboard tab open so sending continues.';
+  }
 
   res.json({
     success: true,
@@ -532,6 +555,7 @@ app.post('/api/campaigns/:id/send', (req, res) => {
     smtpAccountIds,
     listId,
     message,
+    tick: tickResult,
   });
 });
 
@@ -546,12 +570,15 @@ app.post('/api/campaigns/:id/pause', (req, res) => {
   }
 });
 
-app.post('/api/campaigns/:id/resume', (req, res) => {
+app.post('/api/campaigns/:id/resume', async (req, res) => {
   const id = parseInt(req.params.id);
   const campaign = store.getCampaign(id);
   if (campaign && campaign.status === 'paused') {
     store.setCampaignStatus(id, 'queued');
     startSender();
+    if (isServerless) {
+      try { await runSenderTick({ force: true }); } catch (_) { /* ignore */ }
+    }
   }
   res.json({ success: true });
 });
@@ -660,15 +687,41 @@ app.get('/api/sender/status', (req, res) => {
   res.json(getSenderStatus());
 });
 
-app.post('/api/sender/start', (req, res) => {
-  startSender();
-  res.json(getSenderStatus());
+app.post('/api/sender/start', async (req, res) => {
+  try {
+    startSender();
+    // On serverless, start immediately processes a batch so sending does not depend on timers
+    if (isServerless) {
+      const tick = await runSenderTick({ force: true });
+      return res.json({ ...tick.status, tick });
+    }
+    res.json(getSenderStatus());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/sender/stop', (req, res) => {
   stopSender();
   res.json(getSenderStatus());
 });
+
+async function handleSenderTick(req, res) {
+  try {
+    await store.ensureFresh(true);
+    const force = req.query.force === '1' || req.body?.force === true;
+    const tick = await runSenderTick({ force });
+    res.json(tick);
+  } catch (err) {
+    console.error('Sender tick failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+app.get('/api/sender/tick', handleSenderTick);
+app.post('/api/sender/tick', handleSenderTick);
+app.get('/api/cron/sender', handleSenderTick);
+app.post('/api/cron/sender', handleSenderTick);
 
 // --- Email configuration ---
 
@@ -915,7 +968,9 @@ if (!isServerless) {
     }
   });
 } else {
-  console.log('Reachly running in serverless mode (background sender disabled)');
+  const storage = store.getStorageInfo();
+  console.log(`Reachly running in serverless mode (tick-based sender)`);
+  console.log(`  Storage: ${storage.label}${storage.durable ? '' : ' — SET BLOB_READ_WRITE_TOKEN'}`);
 }
 
 module.exports = app;

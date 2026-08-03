@@ -401,7 +401,76 @@ function stopAccountSender(accountId) {
   }
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Process a batch of emails in the current request.
+ * Required on Vercel (no long-lived setTimeout). Also used by cron + dashboard keepalive.
+ */
+async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null } = {}) {
+  const { isServerless } = require('./paths');
+  const started = Date.now();
+  const budgetMs = maxMs || parseInt(process.env.SEND_TICK_MAX_MS || (isServerless ? '45000' : '20000'), 10);
+  const perAccount = maxPerAccount || parseInt(process.env.SEND_TICK_PER_ACCOUNT || (isServerless ? '4' : '2'), 10);
+  const results = [];
+
+  const meta = store.getMeta();
+  if (meta.userStoppedSender && !force) {
+    return { skipped: true, reason: 'user_stopped', results, status: getSenderStatus() };
+  }
+
+  for (const acc of getAccounts()) {
+    store.deferBlockedQueueItems(acc.id);
+  }
+
+  store.resumeSendingCampaigns();
+  if (force) store.setMeta({ userStoppedSender: false });
+
+  for (const acc of getAccounts()) {
+    let processed = 0;
+    while (processed < perAccount && (Date.now() - started) < budgetMs) {
+      if (!accountCanSend(acc.id)) break;
+      if (store.getPendingCount(acc.id) === 0) break;
+
+      const result = await processNextEmailForAccount(acc.id);
+      results.push(result);
+
+      if (result.skipped && ['already_sending', 'paused', 'at_limit', 'queue_empty'].includes(result.reason)) {
+        break;
+      }
+      if (result.retry || result.stopDay) break;
+
+      processed += 1;
+      if (processed < perAccount && (Date.now() - started) < budgetMs) {
+        const delay = Math.min(acc.sendDelayMs || 5000, 8000);
+        await sleep(delay);
+      }
+    }
+  }
+
+  if (store.getPendingCount() === 0) store.updateCampaignStatuses();
+  await store.flushPersist();
+
+  const sent = results.filter(r => r.success).length;
+  const failed = results.filter(r => r.success === false && !r.retry).length;
+  console.log(`[tick] processed=${results.length} sent=${sent} failed=${failed}`);
+  return { skipped: false, sent, failed, results, status: getSenderStatus() };
+}
+
 function startSender() {
+  const { isServerless } = require('./paths');
+  store.setMeta({ userStoppedSender: false });
+  store.resumeSendingCampaigns();
+
+  // Serverless cannot keep setTimeout workers alive — tick mode only.
+  if (isServerless) {
+    const progress = store.getQueueProgress();
+    console.log(`Email sender armed (serverless tick mode) — ${progress.pending} pending`);
+    return;
+  }
+
   const accounts = getAccounts();
   let started = false;
 
@@ -427,8 +496,6 @@ function startSender() {
     return;
   }
 
-  store.resumeSendingCampaigns();
-  store.setMeta({ userStoppedSender: false });
   const progress = store.getQueueProgress();
   const activeWorkers = Object.keys(accountTimers).join(', ');
   console.log(`Email sender started (${activeWorkers}) — #${progress.nextPosition} of ${progress.total} (${progress.pending} remaining)`);
@@ -498,6 +565,7 @@ function getAccountStatuses() {
 }
 
 function getSenderStatus() {
+  const { isServerless } = require('./paths');
   const meta = store.getMeta();
   const progress = store.getQueueProgress();
   const accounts = getAccountStatuses();
@@ -506,14 +574,20 @@ function getSenderStatus() {
   const daysLeft = totalRemaining > 0
     ? Math.ceil(progress.pending / totalRemaining)
     : Math.ceil(progress.pending / (accounts[0]?.dailyLimit || 490));
-  const running = accounts.some(a => a.running);
+  const timerRunning = accounts.some(a => a.running);
   const isSending = accounts.some(a => a.isSending);
   const pausedAccounts = accounts.filter(a => a.paused);
   const dailyQuotaHit = accounts.length > 0 && accounts.every(a => a.dailyQuotaHit || a.remainingToday <= 0);
+  const armed = !meta.userStoppedSender && progress.pending > 0 && totalRemaining > 0;
+  // On serverless, "running" means campaign is armed for tick processing (no long-lived timers).
+  const running = isServerless ? armed : timerRunning;
 
   return {
     running,
     isSending,
+    serverless: isServerless,
+    tickMode: isServerless,
+    storage: store.getStorageInfo(),
     accounts,
     todaySent: totalSentToday,
     remainingToday: totalRemaining,
@@ -580,6 +654,7 @@ module.exports = {
   resetTransporter,
   startSender,
   stopSender,
+  runSenderTick,
   getSenderStatus,
   getAccountStatuses,
   queueCampaign: store.queueCampaign,

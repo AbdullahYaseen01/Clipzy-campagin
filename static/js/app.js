@@ -316,15 +316,22 @@ async function loadDashboard() {
     }
 
     document.getElementById('toggleSender').textContent = sender.running ? 'Stop Sender' : 'Start Sender';
-    renderDashboardAlerts(sender, progress);
+    renderDashboardAlerts(sender, progress, data.storage);
+    await keepSenderAlive(sender, progress);
 
     const campTbody = document.getElementById('campaignStatsTable');
     if (!analytics.campaignStats.length) {
-      campTbody.innerHTML = '<tr><td colspan="10" class="empty-state">No campaigns yet</td></tr>';
+      campTbody.innerHTML = '<tr><td colspan="11" class="empty-state">No campaigns yet</td></tr>';
     } else {
       campTbody.innerHTML = analytics.campaignStats.map(c => {
         const prog = c.total > 0 ? Math.round(((c.sent + c.failed) / c.total) * 100) : 0;
         const acc = accounts.find(a => a.id === c.smtp_account_id);
+        const actions = campaignActions({
+          id: c.id,
+          status: c.status,
+          sent_count: c.sent,
+          campaign_type: c.campaign_type,
+        });
         return `<tr>
           <td>${escapeHtml(c.name)}</td>
           <td style="font-size:0.8rem">${acc ? escapeHtml(acc.email.split('@')[0]) : c.smtp_account_id || '—'}</td>
@@ -341,6 +348,7 @@ async function loadDashboard() {
               <span>${prog}%</span>
             </div>
           </td>
+          <td><div class="campaign-actions-cell">${actions}</div></td>
         </tr>`;
       }).join('');
     }
@@ -480,28 +488,38 @@ function renderQueueProgress(sender, progress) {
   }
 }
 
-function renderDashboardAlerts(sender, progress) {
+function renderDashboardAlerts(sender, progress, storage) {
   const el = document.getElementById('dashboardAlerts');
   const alerts = [];
+  const storeInfo = storage || sender.storage || {};
+
+  if (storeInfo.warning) {
+    alerts.push({ type: 'error', msg: storeInfo.warning });
+  } else if (sender.tickMode && progress?.pending > 0 && sender.running) {
+    alerts.push({
+      type: 'info',
+      msg: 'Serverless send mode: keep this Dashboard tab open. Sender ticks every few seconds and saves progress.',
+    });
+  }
 
   if (progress?.pending > 0 && sender.dailyLimitReached) {
-    alerts.push({ type: 'info', msg: `${progress.pending.toLocaleString()} emails queued. Will auto-resume tomorrow (490/day limit).` });
+    alerts.push({ type: 'info', msg: `${progress.pending.toLocaleString()} emails queued. Will auto-resume tomorrow when limits reset.` });
   }
   if (sender.userStopped && progress?.pending > 0) {
     alerts.push({ type: 'warning', msg: `Sender stopped at email #${sender.stoppedAtPosition || progress.completed}. Click Start Sender to continue.` });
   }
   if (sender.dailyQuotaHit) {
-    alerts.push({ type: 'error', msg: 'Gmail daily sending limit reached. Queue resumes automatically tomorrow.' });
+    alerts.push({ type: 'error', msg: 'Daily sending limit reached. Queue resumes automatically tomorrow.' });
   }
   if (sender.paused && sender.pauseReason) {
     alerts.push({ type: 'warning', msg: `Account paused: ${sender.pauseReason}${sender.pausedUntil ? `. Resumes at ${formatDate(sender.pausedUntil)}` : ''}` });
   }
-  const runningAccounts = (sender.accounts || []).filter(a => a.running);
+  const runningAccounts = (sender.accounts || []).filter(a => a.running || a.isSending);
   if (runningAccounts.length > 1) {
-    alerts.push({ type: 'info', msg: `${runningAccounts.length} campaigns sending in parallel (${runningAccounts.map(a => a.email.split('@')[0]).join(' + ')}).` });
+    alerts.push({ type: 'info', msg: `${runningAccounts.length} inboxes active (${runningAccounts.map(a => a.email.split('@')[0]).join(' + ')}).` });
   }
   if (sender.lastError?.type === 'blocked') {
-    alerts.push({ type: 'error', msg: 'Gmail blocked an email. Review content and wait before resuming.' });
+    alerts.push({ type: 'error', msg: 'SMTP blocked an email. Review content and wait before resuming.' });
   }
 
   if (alerts.length === 0) {
@@ -514,6 +532,27 @@ function renderDashboardAlerts(sender, progress) {
   ).join('');
 }
 
+let senderTickInFlight = false;
+let lastSenderTickAt = 0;
+
+async function keepSenderAlive(sender, progress) {
+  if (!sender?.tickMode) return;
+  if (sender.userStopped || sender.dailyLimitReached) return;
+  if (!progress?.pending || progress.pending <= 0) return;
+  if (senderTickInFlight) return;
+  if (Date.now() - lastSenderTickAt < 4000) return;
+
+  senderTickInFlight = true;
+  lastSenderTickAt = Date.now();
+  try {
+    await api('/sender/tick', { method: 'POST', body: JSON.stringify({}) });
+  } catch (err) {
+    console.warn('Sender tick failed:', err.message);
+  } finally {
+    senderTickInFlight = false;
+  }
+}
+
 document.getElementById('toggleSender').addEventListener('click', async () => {
   try {
     const status = await api('/sender/status');
@@ -521,8 +560,11 @@ document.getElementById('toggleSender').addEventListener('click', async () => {
       await api('/sender/stop', { method: 'POST' });
       toast('Sender stopped — progress saved. Click Start to resume from where you left off.');
     } else {
-      await api('/sender/start', { method: 'POST' });
-      toast('Sender resumed from saved position');
+      const result = await api('/sender/start', { method: 'POST' });
+      const sentNow = result.tick?.sent || 0;
+      toast(sentNow > 0
+        ? `Sender started — ${sentNow} email(s) sent in this batch. Keep Dashboard open.`
+        : 'Sender started — keep Dashboard open so sending continues.');
     }
     loadDashboard();
   } catch (err) {

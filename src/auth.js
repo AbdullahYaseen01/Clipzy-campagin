@@ -31,12 +31,25 @@ function isAuthenticated(req) {
   return parseCookies(req)[COOKIE_NAME] === makeAuthToken();
 }
 
+function isCronAuthorized(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const auth = req.headers.authorization || '';
+  return auth === `Bearer ${secret}`;
+}
+
 function isPublicPath(req) {
   const { path, method } = req;
   if (path === '/login' || path === '/login.html') return true;
   if (path === '/api/auth/login' && method === 'POST') return true;
   if (path === '/api/auth/status' && method === 'GET') return true;
   if (method === 'GET' && (path.startsWith('/css/') || path.startsWith('/js/'))) return true;
+  // Vercel Cron / external keepalive for serverless sender
+  if ((path === '/api/sender/tick' || path === '/api/cron/sender') && (method === 'GET' || method === 'POST')) {
+    if (isCronAuthorized(req)) return true;
+    // Vercel Cron on Hobby may omit secret — allow only when header present
+    if (req.headers['x-vercel-cron'] === '1') return true;
+  }
   return false;
 }
 
