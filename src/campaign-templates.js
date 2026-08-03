@@ -2,7 +2,7 @@ const SITE_URL = 'https://clipzy.xynovix.com/';
 
 const DEFAULT_EMAIL = {
   id: 'default',
-  version: 18,
+  version: 19,
   name: 'Clipzy — YouTuber outreach',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -10,9 +10,11 @@ const DEFAULT_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>I am reaching out from Clipzy. We help creators take one long video and turn it into short clips, captions, and posts without rebuilding everything by hand.</p>
+<p>I am reaching out from Clipzy because this is a problem we hear from creators every week. You film a strong long-form video — then another round of work starts: finding the best moments, cutting short clips, writing captions, and rewriting the same ideas for different platforms.</p>
 
-<p>If that would help your workflow, you can see it here:</p>
+<p>Clipzy keeps that in one place. You upload once, and the same recording can become short clips, captions, social posts, and show notes — so you spend less time rebuilding content after every upload.</p>
+
+<p>If that would help your channel, you can take a look here:</p>
 
 <p>${SITE_URL}</p>
 
@@ -39,7 +41,7 @@ The Clipzy Team</p>`,
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 7,
+  version: 8,
   name: 'Clipzy — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -47,7 +49,9 @@ const FOLLOW_UP_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>Just wanted to make sure my earlier note did not get buried. Clipzy is a simple studio for turning one long video into clips, captions, and posts.</p>
+<p>I wanted to follow up briefly on my earlier note about Clipzy. The idea is simple: take one long-form video and turn it into short clips, captions, posts, and show notes in the same workflow — without doing all of that by hand after every upload.</p>
+
+<p>If it seems useful for your content process, the studio is here:</p>
 
 <p>${SITE_URL}</p>
 
