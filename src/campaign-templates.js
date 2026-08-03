@@ -10,7 +10,7 @@ const DEFAULT_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>I am reaching out from Clipzy because this is a problem we hear from creators every week. You film a strong long-form video — then another round of work starts: finding the best moments, cutting short clips, writing captions, and rewriting the same ideas for different platforms.</p>
+<p>This is a problem we hear from creators every week. You film a strong long-form video — then another round of work starts: finding the best moments, cutting short clips, writing captions, and rewriting the same ideas for different platforms.</p>
 
 <p>Clipzy keeps that in one place. You upload once, and the same recording can become short clips, captions, social posts, and show notes — so you spend less time rebuilding content after every upload.</p>
 
