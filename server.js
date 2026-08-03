@@ -535,15 +535,16 @@ app.post('/api/campaigns/:id/follow-up', (req, res) => {
 
   const { subject, body, preheader, delay_days, send_now } = req.body || {};
   const followTpl = getTemplate('follow-up');
-  const bodyContent = (body || followTpl.body_html).trim();
-  const body_html = toHtmlBody(bodyContent);
+  // Always use the latest follow-up template so bold + copy stay consistent
+  const body_html = toHtmlBody(followTpl.body_html);
+  const followSubject = (subject && String(subject).trim()) || followTpl.subject;
 
   const campaign = store.createCampaign({
     name: `Follow-up: ${parent.name}`.slice(0, 120),
-    subject: (subject || followTpl.subject).trim(),
+    subject: followSubject.trim(),
     body_html,
     body_text: htmlToPlain(body_html),
-    preheader: (preheader || '').trim(),
+    preheader: (preheader || followTpl.preheader || '').trim(),
     include_unsubscribe: false,
     smtp_account_id: parent.smtp_account_id === 'all' ? 'all' : parent.smtp_account_id,
     list_id: parent.list_id,
@@ -570,7 +571,7 @@ app.post('/api/campaigns/:id/follow-up', (req, res) => {
     queued,
     recipients: contactIds.length,
     message: shouldSend
-      ? `Follow-up queued to ${queued.toLocaleString()} recipients from campaign #${parentId}. Each follow-up sends from the same account as the first email.`
+      ? `Follow-up queued to ${queued.toLocaleString()} recipients from campaign #${parentId}. Each follow-up sends from the same inbox as the first email.`
       : `Follow-up draft created for ${contactIds.length.toLocaleString()} successful recipients. Open Campaigns to send.`,
   });
 });

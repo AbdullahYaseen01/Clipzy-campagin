@@ -1246,7 +1246,7 @@ async function createFollowUp(id) {
       toast('No successful sends yet for this campaign', 'error');
       return;
     }
-    if (!confirm(`Create follow-up for ${preview.eligible.toLocaleString()} people who received campaign #${id}?\n\nThis queues a 2nd email only to successful recipients.`)) {
+    if (!confirm(`Create follow-up for ${preview.eligible.toLocaleString()} people who received campaign #${id}?\n\nEach follow-up sends from the same inbox as the first email.\nOnly successful recipients are included.`)) {
       return;
     }
     const result = await api(`/campaigns/${id}/follow-up`, {

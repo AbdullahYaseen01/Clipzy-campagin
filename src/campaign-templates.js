@@ -43,7 +43,7 @@ The Clipzy Team</p>`,
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 10,
+  version: 11,
   name: 'Clipzy — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -51,9 +51,11 @@ const FOLLOW_UP_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>I wanted to follow up briefly on my earlier note. <b>Clipzy's purpose is simple:</b> take <b>one long-form video</b> and turn it into short clips, captions, posts, and show notes in <b>one studio</b> — without doing all of that by hand after every upload.</p>
+<p>I wanted to follow up on my earlier note in case it got buried. Many creators tell us the hard part is not filming — it is everything that comes after: clips, captions, and posts for every platform.</p>
 
-<p>If that seems useful for your content process, the studio is here:</p>
+<p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes inside <b>one studio</b>.</p>
+
+<p>That means less manual editing after each upload, and more content from the videos you already make. If that would help your channel, you can see the workflow here:</p>
 
 <p>${SITE_URL}</p>
 
@@ -61,6 +63,20 @@ const FOLLOW_UP_EMAIL = {
 
 <p>Regards,<br>
 The Clipzy Team</p>`,
+  sample_contact: {
+    first_name: 'Alex',
+    last_name: '',
+    name: 'Alex',
+    title: '',
+    company: '',
+    city: '',
+    country: '',
+    industry: '',
+    company_profile: '',
+    website: '',
+    linkedin: '',
+    email: 'alex@example.com',
+  },
 };
 
 const TEMPLATES = { default: DEFAULT_EMAIL, 'job-outreach': DEFAULT_EMAIL, 'follow-up': FOLLOW_UP_EMAIL };
