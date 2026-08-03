@@ -2,7 +2,7 @@ const SITE_URL = 'https://clipzy.xynovix.com/';
 
 const DEFAULT_EMAIL = {
   id: 'default',
-  version: 22,
+  version: 23,
   name: 'Clipzy — YouTuber outreach',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -10,13 +10,13 @@ const DEFAULT_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>This is a problem we hear from creators every week. You film a strong long-form video — then another round of work starts: finding the best moments, cutting short clips, writing captions, and rewriting the same ideas for different platforms.</p>
+<p>This is a problem we hear from creators every week. You film a strong long-form video — then another round of work starts: finding the best moments, cutting short clips, writing captions, rewriting titles and descriptions, making thumbnails, and reshaping the same ideas for every platform.</p>
 
 <p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes — all from <b>one studio</b>.</p>
 
-<p>You can also <b>go live and record podcasts</b> right from Clipzy — host and guests in the browser, then leave with clips, captions, and show notes from the same session.</p>
+<p>Inside Clipzy you can <b>record live podcasts</b> with guests in the browser, <b>edit video and audio</b>, generate <b>thumbnails</b>, create <b>titles and descriptions</b>, cut short clips for Shorts / Reels / TikTok, write captions and social posts, and prepare show notes — without jumping between five different tools.</p>
 
-<p>Upload once. Leave with content ready for Shorts, Reels, TikTok, and your social posts, plus show notes for the main video. Less rebuilding after every upload. More reach from the same filming time.</p>
+<p>One studio. One upload or recording. A full content pack ready to publish. Less rebuilding after every session. More reach from the same filming time.</p>
 
 <p>If that would help your channel, you can take a look here:</p>
 
@@ -45,7 +45,7 @@ The Clipzy Team</p>`,
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 12,
+  version: 13,
   name: 'Clipzy — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -53,13 +53,13 @@ const FOLLOW_UP_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>I wanted to follow up on my earlier note in case it got buried. Many creators tell us the hard part is not filming — it is everything that comes after: clips, captions, and posts for every platform.</p>
+<p>I wanted to follow up on my earlier note in case it got buried. Many creators tell us the hard part is not filming — it is everything that comes after: clips, captions, thumbnails, titles, descriptions, and posts for every platform.</p>
 
 <p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes — all from <b>one studio</b>.</p>
 
-<p>You can also <b>go live and record podcasts</b> right from Clipzy — host and guests in the browser, then leave with clips, captions, and show notes from the same session.</p>
+<p>With Clipzy you can <b>record live podcasts</b>, <b>edit video and audio</b>, generate <b>thumbnails</b>, write <b>titles and descriptions</b>, cut Shorts / Reels / TikTok clips, and leave with captions, social posts, and show notes from the same session.</p>
 
-<p>That means less manual editing after each upload, and more content from the videos you already make. If that would help your channel, you can see the workflow here:</p>
+<p>That means less tool-switching and more content from the videos you already make. If that would help your channel, you can see the workflow here:</p>
 
 <p>${SITE_URL}</p>
 
