@@ -81,7 +81,8 @@ function validateCampaign({ subject, bodyHtml, preheader = '' }) {
   if (linkCount > 1) warnings.push(`${linkCount} links detected — plain text URLs are safer than clickable links`);
 
   const strongCount = (bodyHtml.match(/<strong>|<b>/gi) || []).length;
-  if (strongCount > 2) warnings.push('Too much bold text — plain emails look more personal');
+  // Allow a few product-emphasis bolds; more than 4 starts to look promotional
+  if (strongCount > 4) warnings.push('Too much bold text — plain emails look more personal');
 
   const capsWords = (plain.match(/\b[A-Z]{2,}\b/g) || []).filter(w => !['AI', 'API', 'AWS', 'BLE', 'CAN', 'C', 'GSM', 'HTTP', 'HTTPS', 'I2C', 'IoT', 'ML', 'MQTT', 'OCR', 'OTA', 'REST', 'SPI', 'SQL', 'TCP', 'UART', 'USB', 'VP', 'CTO', 'CEO'].includes(w));
   if (capsWords.length > 8) warnings.push('Too many ALL CAPS words in body — keep acronyms only where needed');
