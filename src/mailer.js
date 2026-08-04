@@ -412,8 +412,12 @@ function sleep(ms) {
 async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null } = {}) {
   const { isServerless } = require('./paths');
   const started = Date.now();
-  const budgetMs = maxMs || parseInt(process.env.SEND_TICK_MAX_MS || (isServerless ? '45000' : '20000'), 10);
-  const perAccount = maxPerAccount || parseInt(process.env.SEND_TICK_PER_ACCOUNT || (isServerless ? '4' : '2'), 10);
+  // Serverless: short ticks (1/account, parallel) + external cron spacing → low Fluid CPU, stays alive
+  const budgetMs = maxMs || parseInt(process.env.SEND_TICK_MAX_MS || (isServerless ? '50000' : '20000'), 10);
+  const perAccount = maxPerAccount || parseInt(
+    process.env.SEND_TICK_PER_ACCOUNT || (isServerless ? '1' : '2'),
+    10
+  );
   const results = [];
 
   const meta = store.getMeta();
@@ -422,35 +426,51 @@ async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null
   }
 
   for (const acc of getAccounts()) {
-    store.deferBlockedQueueItems(acc.id);
+    try { store.deferBlockedQueueItems(acc.id); } catch (_) { /* ignore */ }
   }
 
   store.resumeSendingCampaigns();
   if (force) store.setMeta({ userStoppedSender: false });
 
-  for (const acc of getAccounts()) {
+  // Parallel per-inbox send — one account failing must not stop others
+  const accountJobs = getAccounts().map(async (acc) => {
+    const accountResults = [];
     let processed = 0;
     while (processed < perAccount && (Date.now() - started) < budgetMs) {
-      if (!accountCanSend(acc.id)) break;
-      if (store.getPendingCount(acc.id) === 0) break;
+      try {
+        if (!accountCanSend(acc.id)) break;
+        if (store.getPendingCount(acc.id) === 0) break;
 
-      const result = await processNextEmailForAccount(acc.id);
-      results.push(result);
+        const result = await processNextEmailForAccount(acc.id);
+        accountResults.push(result);
 
-      if (result.skipped && ['already_sending', 'paused', 'at_limit', 'queue_empty'].includes(result.reason)) {
+        if (result.skipped && ['already_sending', 'paused', 'at_limit', 'queue_empty'].includes(result.reason)) {
+          break;
+        }
+        if (result.retry || result.stopDay) break;
+
+        processed += 1;
+        // On Vercel skip long sleeps (cron/dashboard provides spacing). Local keeps delay.
+        if (!isServerless && processed < perAccount && (Date.now() - started) < budgetMs) {
+          await sleep(Math.min(acc.sendDelayMs || 5000, 8000));
+        }
+      } catch (err) {
+        console.error(`[tick] ${acc.id} error:`, err.message);
+        accountResults.push({ success: false, accountId: acc.id, error: err.message });
         break;
       }
-      if (result.retry || result.stopDay) break;
-
-      processed += 1;
-      if (processed < perAccount && (Date.now() - started) < budgetMs) {
-        const delay = Math.min(acc.sendDelayMs || 5000, 8000);
-        await sleep(delay);
-      }
     }
-  }
+    return accountResults;
+  });
 
-  if (store.getPendingCount() === 0) store.updateCampaignStatuses();
+  const nested = await Promise.all(accountJobs);
+  for (const batch of nested) results.push(...batch);
+
+  try {
+    if (store.getPendingCount() === 0) store.updateCampaignStatuses();
+  } catch (_) { /* ignore */ }
+
+  store.setMeta({ lastTickAt: new Date().toISOString() });
   await store.flushPersist();
 
   const sent = results.filter(r => r.success).length;
@@ -586,8 +606,9 @@ function getSenderStatus() {
     running,
     isSending,
     serverless: isServerless,
-    tickMode: false,
+    tickMode: isServerless,
     storage: store.getStorageInfo(),
+    lastTickAt: meta.lastTickAt || null,
     accounts,
     todaySent: totalSentToday,
     remainingToday: totalRemaining,

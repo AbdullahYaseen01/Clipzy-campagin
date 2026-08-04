@@ -53,7 +53,18 @@ function toHtmlBody(body) {
 
 app.use(express.json({ limit: '5mb' }));
 
-// Keep store hydrated from durable Blob on every serverless request
+function scheduleBackground(promise) {
+  try {
+    const { waitUntil } = require('@vercel/functions');
+    if (typeof waitUntil === 'function') {
+      waitUntil(promise);
+      return;
+    }
+  } catch (_) { /* not on Vercel functions runtime */ }
+  promise.catch((err) => console.error('[bg]', err.message));
+}
+
+// Hydrate durable store (Upstash) on every serverless request
 app.use(async (req, res, next) => {
   try {
     await store.ensureFresh();
@@ -118,8 +129,26 @@ app.get('/api/accounts', (req, res) => {
 });
 
 app.get('/api/stats', (req, res) => {
+  const sender = getSenderStatus();
+  const progress = store.getQueueProgress();
+
+  // Watchdog: if campaign armed and pending, keep ticking in background (survives tab close when cron also set)
+  if (
+    isServerless
+    && !sender.userStopped
+    && progress.pending > 0
+    && !sender.dailyLimitReached
+  ) {
+    const last = sender.lastTickAt ? Date.parse(sender.lastTickAt) : 0;
+    if (!last || Date.now() - last > 12000) {
+      scheduleBackground(
+        runSenderTick({ force: false }).catch((err) => console.error('[watchdog]', err.message))
+      );
+    }
+  }
+
   res.json({
-    sender: getSenderStatus(),
+    sender,
     accounts: getAccountStatuses(),
     lists: store.getAllListCounts(),
     contacts: store.getContactCounts(),
@@ -127,7 +156,7 @@ app.get('/api/stats', (req, res) => {
     recentLogs: store.getRecentLogs(50),
     last7Days: store.getLast7Days(),
     dailyLimit: DAILY_LIMIT,
-    progress: store.getQueueProgress(),
+    progress,
     analytics: store.getAnalytics(),
     storage: store.getStorageInfo(),
   });
@@ -968,7 +997,12 @@ if (!isServerless) {
     }
   });
 } else {
-  console.log('Reachly on Vercel: UI only. For full campaigns use Railway or npm start locally.');
+  const storage = store.getStorageInfo();
+  console.log('Reachly serverless mode — tick sender + Upstash persistence');
+  console.log(`  Storage: ${storage.label}`);
+  if (!storage.durable) {
+    console.log('  WARNING: set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN');
+  }
 }
 
 module.exports = app;

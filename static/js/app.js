@@ -495,6 +495,11 @@ function renderDashboardAlerts(sender, progress, storage) {
 
   if (storeInfo.warning) {
     alerts.push({ type: 'error', msg: storeInfo.warning });
+  } else if (sender.tickMode && storeInfo.durable && progress?.pending > 0 && sender.running) {
+    alerts.push({
+      type: 'info',
+      msg: 'Hardened Vercel sender active — queue is durable. Keep Dashboard open OR use an external cron on /api/cron/sender.',
+    });
   }
 
   if (progress?.pending > 0 && sender.dailyLimitReached) {
@@ -527,9 +532,26 @@ function renderDashboardAlerts(sender, progress, storage) {
   ).join('');
 }
 
-// Vercel Fluid CPU / free limits — do not auto-tick from the browser.
-async function keepSenderAlive() {
-  return;
+let senderTickInFlight = false;
+let lastSenderTickAt = 0;
+
+/** Gentle keepalive — 1 tick / 15s so Fluid CPU stays low but campaign does not stall. */
+async function keepSenderAlive(sender, progress) {
+  if (!sender?.tickMode) return;
+  if (sender.userStopped || sender.dailyLimitReached) return;
+  if (!progress?.pending || progress.pending <= 0) return;
+  if (senderTickInFlight) return;
+  if (Date.now() - lastSenderTickAt < 15000) return;
+
+  senderTickInFlight = true;
+  lastSenderTickAt = Date.now();
+  try {
+    await api('/sender/tick', { method: 'POST', body: JSON.stringify({}) });
+  } catch (err) {
+    console.warn('Sender tick failed:', err.message);
+  } finally {
+    senderTickInFlight = false;
+  }
 }
 
 document.getElementById('toggleSender').addEventListener('click', async () => {

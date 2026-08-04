@@ -35,7 +35,9 @@ function isCronAuthorized(req) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
   const auth = req.headers.authorization || '';
-  return auth === `Bearer ${secret}`;
+  if (auth === `Bearer ${secret}`) return true;
+  if (req.query?.key === secret || req.query?.secret === secret) return true;
+  return false;
 }
 
 function isPublicPath(req) {
