@@ -586,7 +586,7 @@ function getSenderStatus() {
     running,
     isSending,
     serverless: isServerless,
-    tickMode: isServerless,
+    tickMode: false,
     storage: store.getStorageInfo(),
     accounts,
     todaySent: totalSentToday,

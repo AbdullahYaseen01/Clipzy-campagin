@@ -495,11 +495,6 @@ function renderDashboardAlerts(sender, progress, storage) {
 
   if (storeInfo.warning) {
     alerts.push({ type: 'error', msg: storeInfo.warning });
-  } else if (sender.tickMode && progress?.pending > 0 && sender.running) {
-    alerts.push({
-      type: 'info',
-      msg: 'Serverless send mode: keep this Dashboard tab open. Sender ticks every few seconds and saves progress.',
-    });
   }
 
   if (progress?.pending > 0 && sender.dailyLimitReached) {
@@ -532,25 +527,9 @@ function renderDashboardAlerts(sender, progress, storage) {
   ).join('');
 }
 
-let senderTickInFlight = false;
-let lastSenderTickAt = 0;
-
-async function keepSenderAlive(sender, progress) {
-  if (!sender?.tickMode) return;
-  if (sender.userStopped || sender.dailyLimitReached) return;
-  if (!progress?.pending || progress.pending <= 0) return;
-  if (senderTickInFlight) return;
-  if (Date.now() - lastSenderTickAt < 4000) return;
-
-  senderTickInFlight = true;
-  lastSenderTickAt = Date.now();
-  try {
-    await api('/sender/tick', { method: 'POST', body: JSON.stringify({}) });
-  } catch (err) {
-    console.warn('Sender tick failed:', err.message);
-  } finally {
-    senderTickInFlight = false;
-  }
+// Vercel Fluid CPU / free limits — do not auto-tick from the browser.
+async function keepSenderAlive() {
+  return;
 }
 
 document.getElementById('toggleSender').addEventListener('click', async () => {

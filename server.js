@@ -968,9 +968,7 @@ if (!isServerless) {
     }
   });
 } else {
-  const storage = store.getStorageInfo();
-  console.log(`Reachly running in serverless mode (tick-based sender)`);
-  console.log(`  Storage: ${storage.label}${storage.durable ? '' : ' — SET BLOB_READ_WRITE_TOKEN'}`);
+  console.log('Reachly on Vercel: UI only. For full campaigns use Railway or npm start locally.');
 }
 
 module.exports = app;

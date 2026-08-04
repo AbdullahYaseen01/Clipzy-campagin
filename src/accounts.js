@@ -1,6 +1,10 @@
 const HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const PORT = parseInt(process.env.SMTP_PORT || '587', 10);
 const SECURE = process.env.SMTP_SECURE === 'true';
+// Personal Gmail: keep per-inbox volume modest so 10 accounts can share ~1500–2000/day
+const DEFAULT_DAILY = parseInt(process.env.DAILY_LIMIT || '200', 10);
+const DEFAULT_DELAY = parseInt(process.env.SEND_DELAY_MS || '8000', 10);
+const MAX_ACCOUNTS = 10;
 
 function buildAccount({
   id,
@@ -29,104 +33,58 @@ function buildAccount({
     email: email.trim(),
     pass: pass.replace(/\s/g, ''),
     from: email.trim(),
-    fromName: fromName || email.split('@')[0],
+    fromName: fromName || 'The Clipzy Team',
     dailyLimit,
     sendDelayMs,
     protected: !!isProtected,
   };
 }
 
+function envFlag(name) {
+  const v = process.env[name];
+  if (v == null) return undefined;
+  return v !== 'false' && v !== '0';
+}
+
 function loadAccounts() {
   const accounts = [];
 
-  const account1 = buildAccount({
-    id: 'account1',
-    listId: 'list1',
-    label: process.env.SMTP_ACCOUNT_1_LABEL || 'Email 1 — Primary',
-    listLabel: 'Data List 1',
-    email: process.env.SMTP_ACCOUNT_1_USER || process.env.SMTP_USER,
-    pass: process.env.SMTP_ACCOUNT_1_PASS || process.env.SMTP_PASS,
-    fromName: process.env.SMTP_ACCOUNT_1_FROM_NAME || process.env.SMTP_FROM_NAME || 'The Clipzy Team',
-    host: process.env.SMTP_ACCOUNT_1_HOST || process.env.SMTP_HOST,
-    port: process.env.SMTP_ACCOUNT_1_PORT ? parseInt(process.env.SMTP_ACCOUNT_1_PORT, 10) : undefined,
-    secure: process.env.SMTP_ACCOUNT_1_SECURE != null
-      ? process.env.SMTP_ACCOUNT_1_SECURE !== 'false'
-      : undefined,
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_1_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_1_DELAY_MS || process.env.SEND_DELAY_MS || '8000', 10),
-    protected: false,
-  });
-  if (account1) accounts.push(account1);
+  for (let i = 1; i <= MAX_ACCOUNTS; i++) {
+    const user = process.env[`SMTP_ACCOUNT_${i}_USER`]
+      || (i === 1 ? process.env.SMTP_USER : null);
+    const pass = process.env[`SMTP_ACCOUNT_${i}_PASS`]
+      || (i === 1 ? process.env.SMTP_PASS : null);
 
-  const account2 = buildAccount({
-    id: 'account2',
-    listId: 'list2',
-    label: process.env.SMTP_ACCOUNT_2_LABEL || 'Email 2 — Outreach',
-    listLabel: 'Data List 2',
-    email: process.env.SMTP_ACCOUNT_2_USER,
-    pass: process.env.SMTP_ACCOUNT_2_PASS,
-    fromName: process.env.SMTP_ACCOUNT_2_FROM_NAME || 'The Clipzy Team',
-    host: process.env.SMTP_ACCOUNT_2_HOST || process.env.SMTP_HOST,
-    port: process.env.SMTP_ACCOUNT_2_PORT ? parseInt(process.env.SMTP_ACCOUNT_2_PORT, 10) : undefined,
-    secure: process.env.SMTP_ACCOUNT_2_SECURE != null
-      ? process.env.SMTP_ACCOUNT_2_SECURE !== 'false'
-      : undefined,
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_2_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_2_DELAY_MS || '8000', 10),
-    protected: false,
-  });
-  if (account2) accounts.push(account2);
-
-  const account3 = buildAccount({
-    id: 'account3',
-    listId: 'list3',
-    label: 'Email 3 — Hostinger',
-    listLabel: 'Data List 3',
-    email: process.env.SMTP_ACCOUNT_3_USER,
-    pass: process.env.SMTP_ACCOUNT_3_PASS,
-    fromName: process.env.SMTP_ACCOUNT_3_FROM_NAME || 'The Clipzy Team',
-    host: process.env.SMTP_ACCOUNT_3_HOST || 'smtp.hostinger.com',
-    port: parseInt(process.env.SMTP_ACCOUNT_3_PORT || '465', 10),
-    secure: process.env.SMTP_ACCOUNT_3_SECURE !== 'false',
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_3_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_3_DELAY_MS || '8000', 10),
-    protected: false,
-  });
-  if (account3) accounts.push(account3);
-
-  const account4 = buildAccount({
-    id: 'account4',
-    listId: 'list4',
-    label: 'Email 4 — Hostinger (Ahmad)',
-    listLabel: 'Data List 4',
-    email: process.env.SMTP_ACCOUNT_4_USER,
-    pass: process.env.SMTP_ACCOUNT_4_PASS,
-    fromName: process.env.SMTP_ACCOUNT_4_FROM_NAME || 'The Clipzy Team',
-    host: process.env.SMTP_ACCOUNT_4_HOST || 'smtp.hostinger.com',
-    port: parseInt(process.env.SMTP_ACCOUNT_4_PORT || '465', 10),
-    secure: process.env.SMTP_ACCOUNT_4_SECURE !== 'false',
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_4_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_4_DELAY_MS || '8000', 10),
-    protected: false,
-  });
-  if (account4) accounts.push(account4);
-
-  const account5 = buildAccount({
-    id: 'account5',
-    listId: 'list5',
-    label: 'Email 5 — Hostinger (Outreach)',
-    listLabel: 'Data List 5',
-    email: process.env.SMTP_ACCOUNT_5_USER,
-    pass: process.env.SMTP_ACCOUNT_5_PASS,
-    fromName: process.env.SMTP_ACCOUNT_5_FROM_NAME || 'The Clipzy Team',
-    host: process.env.SMTP_ACCOUNT_5_HOST || 'smtp.hostinger.com',
-    port: parseInt(process.env.SMTP_ACCOUNT_5_PORT || '465', 10),
-    secure: process.env.SMTP_ACCOUNT_5_SECURE !== 'false',
-    dailyLimit: parseInt(process.env.SMTP_ACCOUNT_5_DAILY_LIMIT || process.env.DAILY_LIMIT || '900', 10),
-    sendDelayMs: parseInt(process.env.SMTP_ACCOUNT_5_DELAY_MS || '8000', 10),
-    protected: false,
-  });
-  if (account5) accounts.push(account5);
+    const account = buildAccount({
+      id: `account${i}`,
+      listId: `list${i}`,
+      label: process.env[`SMTP_ACCOUNT_${i}_LABEL`] || `Gmail ${i}`,
+      listLabel: `Data List ${i}`,
+      email: user,
+      pass,
+      fromName: process.env[`SMTP_ACCOUNT_${i}_FROM_NAME`]
+        || process.env.SMTP_FROM_NAME
+        || 'The Clipzy Team',
+      // Always Gmail SMTP unless explicitly overridden per account
+      host: process.env[`SMTP_ACCOUNT_${i}_HOST`] || process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: process.env[`SMTP_ACCOUNT_${i}_PORT`]
+        ? parseInt(process.env[`SMTP_ACCOUNT_${i}_PORT`], 10)
+        : undefined,
+      secure: envFlag(`SMTP_ACCOUNT_${i}_SECURE`) != null
+        ? envFlag(`SMTP_ACCOUNT_${i}_SECURE`)
+        : undefined,
+      dailyLimit: parseInt(
+        process.env[`SMTP_ACCOUNT_${i}_DAILY_LIMIT`] || String(DEFAULT_DAILY),
+        10
+      ),
+      sendDelayMs: parseInt(
+        process.env[`SMTP_ACCOUNT_${i}_DELAY_MS`] || String(DEFAULT_DELAY),
+        10
+      ),
+      protected: false,
+    });
+    if (account) accounts.push(account);
+  }
 
   return accounts;
 }
@@ -160,4 +118,5 @@ module.exports = {
   getAccountByList,
   getDefaultAccount,
   resetAccountsCache,
+  MAX_ACCOUNTS,
 };

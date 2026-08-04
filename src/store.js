@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const { dataDir, isServerless } = require('./paths');
-const { downloadStore, uploadStore, getPersistMode, hasBlobToken } = require('./remote-persist');
 
 const dbPath = path.join(dataDir, 'store.json');
 
@@ -16,10 +15,6 @@ const empty = () => ({
 });
 
 let memory = null;
-let loadedVersion = 0;
-let loadedAt = 0;
-let persistPromise = Promise.resolve();
-let hydrating = null;
 
 function loadFromFile() {
   if (!fs.existsSync(dbPath)) return null;
@@ -41,75 +36,44 @@ function saveToFile(data) {
 function load() {
   if (memory) return memory;
   memory = loadFromFile() || empty();
-  loadedVersion = memory.meta?.storeVersion || 0;
-  loadedAt = Date.now();
   return memory;
 }
 
-async function ensureFresh(force = false) {
-  if (!isServerless) {
-    if (!memory) load();
-    return memory;
-  }
-
-  if (hydrating) {
-    await hydrating;
-    return memory;
-  }
-
-  const now = Date.now();
-  if (!force && memory && now - loadedAt < 1200) return memory;
-
-  hydrating = (async () => {
-    if (hasBlobToken()) {
-      const remote = await downloadStore();
-      if (remote) {
-        const remoteVersion = remote.meta?.storeVersion || 0;
-        if (!memory || remoteVersion >= loadedVersion) {
-          memory = migrateData(remote);
-          loadedVersion = remoteVersion;
-          saveToFile(memory);
-        }
-      } else if (!memory) {
-        memory = loadFromFile() || empty();
-        loadedVersion = memory.meta?.storeVersion || 0;
-      }
-    } else if (!memory) {
-      memory = loadFromFile() || empty();
-      loadedVersion = memory.meta?.storeVersion || 0;
-    }
-    loadedAt = Date.now();
-  })();
-
-  try {
-    await hydrating;
-  } finally {
-    hydrating = null;
-  }
+async function ensureFresh() {
+  if (!memory) load();
   return memory;
-}
-
-function scheduleRemoteSave(data) {
-  if (!hasBlobToken()) return;
-  const snapshot = JSON.parse(JSON.stringify(data));
-  persistPromise = persistPromise
-    .then(() => uploadStore(snapshot))
-    .catch((err) => console.error('[store] Remote persist failed:', err.message));
 }
 
 async function flushPersist() {
-  await persistPromise;
+  // Blob removed — no remote persist
 }
 
 function getStorageInfo() {
-  const info = getPersistMode(isServerless);
+  const contacts = memory?.contacts?.length || 0;
+  const sendLog = memory?.send_log?.length || 0;
+  const pendingQueue = memory?.send_queue?.filter(q => q.status === 'pending').length || 0;
+  if (isServerless) {
+    return {
+      mode: 'ephemeral',
+      durable: false,
+      label: 'Vercel ephemeral',
+      warning: 'Vercel free limits stop bulk sends. Use Railway or run locally (npm start) for full 1500–2000 campaigns.',
+      storeVersion: memory?.meta?.storeVersion || 0,
+      contacts,
+      sendLog,
+      pendingQueue,
+      serverless: true,
+    };
+  }
   return {
-    ...info,
-    storeVersion: memory?.meta?.storeVersion || loadedVersion || 0,
-    contacts: memory?.contacts?.length || 0,
-    sendLog: memory?.send_log?.length || 0,
-    pendingQueue: memory?.send_queue?.filter(q => q.status === 'pending').length || 0,
-    serverless: isServerless,
+    mode: 'disk',
+    durable: true,
+    label: 'Local / Railway disk',
+    storeVersion: memory?.meta?.storeVersion || 0,
+    contacts,
+    sendLog,
+    pendingQueue,
+    serverless: false,
   };
 }
 
@@ -134,10 +98,7 @@ function save(data) {
   data.meta.storeVersion = (data.meta.storeVersion || 0) + 1;
   data.meta.updatedAt = new Date().toISOString();
   memory = data;
-  loadedVersion = data.meta.storeVersion;
-  loadedAt = Date.now();
   saveToFile(data);
-  scheduleRemoteSave(data);
 }
 
 function now() {
@@ -582,11 +543,21 @@ function queueCampaign(campaignId, contactIds, { allowResend = false, smtpAccoun
 
       let smtpAccountId = camp?.smtp_account_id || 'account1';
       if (isFollowUp) {
+        // Always reuse the inbox that sent the first email
         smtpAccountId = parentAccountByContact.get(contactId) || accountPool?.[0] || 'account1';
         if (smtpAccountId === 'all') smtpAccountId = accountPool?.[0] || 'account1';
-      } else if (accountPool) {
-        smtpAccountId = accountPool[rotateIndex % accountPool.length];
-        rotateIndex += 1;
+      } else {
+        // Prefer inbox mapped to this contact's list (even upload split)
+        const listKey = contact.list_id || 'list1';
+        const mappedId = listKey.replace(/^list/, 'account');
+        if (accountPool?.includes(mappedId)) {
+          smtpAccountId = mappedId;
+        } else if (accountPool?.length) {
+          smtpAccountId = accountPool[rotateIndex % accountPool.length];
+          rotateIndex += 1;
+        } else if (smtpAccountId === 'all') {
+          smtpAccountId = mappedId || 'account1';
+        }
       }
 
       data.send_queue.push({
@@ -594,7 +565,7 @@ function queueCampaign(campaignId, contactIds, { allowResend = false, smtpAccoun
         campaign_id: campaignId,
         contact_id: contactId,
         smtp_account_id: smtpAccountId,
-        list_id: listId === 'all' ? (contact.list_id || 'list1') : listId,
+        list_id: contact.list_id || (listId === 'all' ? 'list1' : listId),
         status: 'pending',
         error_message: null,
         sent_at: null,
