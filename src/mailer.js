@@ -272,6 +272,34 @@ async function sendTestEmail(campaign, testTo, sampleContact, accountId) {
 
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3', 10);
 
+function getFailoverCandidates(excludeAccountId, tried = []) {
+  const triedSet = new Set([...(tried || []), excludeAccountId].filter(Boolean));
+  return getAccounts()
+    .filter(a => !triedSet.has(a.id) && accountCanSend(a.id))
+    .map(a => a.id);
+}
+
+/**
+ * On send failure: move recipient to next healthy inbox (not for bad recipient addresses).
+ */
+function tryFailoverToNextAccount(item, fromAccountId, reason) {
+  const tried = store.getTriedAccounts(item.queue_id);
+  const candidates = getFailoverCandidates(fromAccountId, tried);
+  if (candidates.length === 0) return null;
+
+  const nextId = store.failoverQueueItem(
+    item.queue_id,
+    fromAccountId,
+    `${reason} — failover pending`,
+    candidates
+  );
+  if (nextId) {
+    store.requeueItem(item.queue_id, `${reason} — moved to ${nextId}`);
+    console.warn(`⇄ [${fromAccountId} → ${nextId}] ${item.email}: ${reason}`);
+  }
+  return nextId;
+}
+
 async function processNextEmailForAccount(accountId) {
   const state = initAccountState(accountId);
   if (state.isSending) return { skipped: true, reason: 'already_sending', accountId };
@@ -304,7 +332,7 @@ async function processNextEmailForAccount(accountId) {
     state.consecutiveRateLimits = 0;
     senderState.lastError = null;
     senderState.lastSentAt = Date.now();
-    lastSendDelayMs = acc?.sendDelayMs || 5000;
+    lastSendDelayMs = acc?.sendDelayMs || 20000;
     const todayCount = store.getTodaySentCount(accountId);
     console.log(`✓ [${accountId}] Sent to ${item.email} (${todayCount}/${acc.dailyLimit} today)`);
     return { success: true, email: item.email, accountId };
@@ -312,39 +340,64 @@ async function processNextEmailForAccount(accountId) {
     const classified = classifySmtpError(err);
     senderState.lastError = { ...classified, raw: err.message, at: new Date().toISOString(), accountId };
 
-    if (classified.type === 'rate_limit' || classified.type === 'temporary') {
-      const retries = store.getQueueRetries(item.queue_id);
-      if (retries < MAX_RETRIES) {
-        store.requeueItem(item.queue_id, classified.message);
-        state.consecutiveRateLimits++;
-        const backoff = classified.pauseMs * Math.pow(1.5, state.consecutiveRateLimits - 1);
-        const pauseMs = acc?.protected ? Math.min(backoff * 2, 3600000) : Math.min(backoff, 1800000);
-        pauseSenderForAccount(accountId, pauseMs, classified.message);
-        console.warn(`↻ [${accountId}] Rate limited on ${item.email} — retry ${retries + 1}/${MAX_RETRIES}`);
-        return { success: false, email: item.email, retry: true, error: classified.message, accountId };
-      }
+    // Bad recipient — do not bounce across inboxes
+    if (classified.type === 'invalid_recipient') {
+      store.markFailed(item.queue_id, item.campaign_id, item.contact_id, item.email, err.message, classified.type, meta);
+      store.updateCampaignStatuses();
+      console.error(`✗ [${accountId}] Invalid recipient ${item.email}: ${err.message}`);
+      return { success: false, email: item.email, error: err.message, accountId };
     }
 
     if (classified.stopDay) {
       markAccountDailyQuotaHit(accountId);
-      store.deferQueueItem(item.queue_id, classified.message);
       stopAccountSender(accountId);
-      console.error(`⛔ [${accountId}] Gmail daily limit — deferred ${item.email} until tomorrow`);
+      const nextId = tryFailoverToNextAccount(item, accountId, 'Daily limit on inbox');
+      if (nextId) {
+        return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId, stopDay: true };
+      }
+      store.deferQueueItem(item.queue_id, classified.message);
+      console.error(`⛔ [${accountId}] Daily limit — no failover left for ${item.email}`);
       return { success: false, email: item.email, error: classified.message, accountId, stopDay: true };
     }
 
+    if (classified.type === 'rate_limit' || classified.type === 'temporary') {
+      state.consecutiveRateLimits++;
+      const backoff = (classified.pauseMs || 60000) * Math.pow(1.5, Math.max(0, state.consecutiveRateLimits - 1));
+      const pauseMs = Math.min(backoff, 1800000);
+      pauseSenderForAccount(accountId, pauseMs, classified.message);
+
+      const nextId = tryFailoverToNextAccount(item, accountId, classified.message);
+      if (nextId) {
+        return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId };
+      }
+
+      const retries = store.getQueueRetries(item.queue_id);
+      if (retries < MAX_RETRIES) {
+        store.requeueItem(item.queue_id, classified.message);
+        console.warn(`↻ [${accountId}] Retry same inbox ${item.email} — ${retries + 1}/${MAX_RETRIES}`);
+        return { success: false, email: item.email, retry: true, error: classified.message, accountId };
+      }
+    }
+
     if (classified.pauseAll) {
-      store.pauseCampaignsForAccount(accountId);
-      store.requeueItem(item.queue_id, classified.message);
       const pauseMs = acc?.protected ? 7200000 : 3600000;
       pauseSenderForAccount(accountId, pauseMs, classified.message);
-      if (acc?.protected) {
-        state.blockedUntil = Date.now() + pauseMs;
-        console.error(`⛔ [${accountId}] PROTECTED account — blocked, pausing ${pauseMs / 60000} min`);
-      } else {
-        console.error(`⛔ [${accountId}] Gmail blocked sending — paused ${pauseMs / 60000} min`);
+      if (acc?.protected) state.blockedUntil = Date.now() + pauseMs;
+
+      const nextId = tryFailoverToNextAccount(item, accountId, classified.message);
+      if (nextId) {
+        console.error(`⛔ [${accountId}] Blocked — recipient moved to ${nextId}`);
+        return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId };
       }
+      store.requeueItem(item.queue_id, classified.message);
+      console.error(`⛔ [${accountId}] Blocked — no failover for ${item.email}`);
       return { success: false, email: item.email, error: classified.message, accountId };
+    }
+
+    // Other failures: try next inbox before marking failed
+    const nextId = tryFailoverToNextAccount(item, accountId, err.message || classified.message);
+    if (nextId) {
+      return { success: false, email: item.email, retry: true, failover: nextId, error: err.message, accountId };
     }
 
     store.markFailed(item.queue_id, item.campaign_id, item.contact_id, item.email, err.message, classified.type, meta);
@@ -387,7 +440,7 @@ function scheduleAccountSender(accountId) {
       return;
     }
 
-    const delay = acc?.sendDelayMs || 5000;
+    const delay = acc?.sendDelayMs || 20000;
     accountTimers[accountId] = setTimeout(tick, delay);
   };
 
@@ -452,7 +505,7 @@ async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null
         processed += 1;
         // On Vercel skip long sleeps (cron/dashboard provides spacing). Local keeps delay.
         if (!isServerless && processed < perAccount && (Date.now() - started) < budgetMs) {
-          await sleep(Math.min(acc.sendDelayMs || 5000, 8000));
+          await sleep(acc.sendDelayMs || 20000);
         }
       } catch (err) {
         console.error(`[tick] ${acc.id} error:`, err.message);

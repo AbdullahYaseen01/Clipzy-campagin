@@ -3,7 +3,7 @@ const PORT = parseInt(process.env.SMTP_PORT || '587', 10);
 const SECURE = process.env.SMTP_SECURE === 'true';
 // Personal Gmail: keep per-inbox volume modest so 10 accounts can share ~1500–2000/day
 const DEFAULT_DAILY = parseInt(process.env.DAILY_LIMIT || '200', 10);
-const DEFAULT_DELAY = parseInt(process.env.SEND_DELAY_MS || '8000', 10);
+const DEFAULT_DELAY = parseInt(process.env.SEND_DELAY_MS || '20000', 10);
 const MAX_ACCOUNTS = 10;
 
 function buildAccount({

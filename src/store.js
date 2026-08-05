@@ -694,6 +694,37 @@ function requeueItem(queueId, errorMessage) {
   });
 }
 
+/**
+ * Move a pending queue item to the next SMTP inbox after a send failure.
+ * Returns the new account id, or null if every account was already tried.
+ */
+function failoverQueueItem(queueId, fromAccountId, errorMessage, candidateAccountIds = []) {
+  return withStore((data) => {
+    const q = data.send_queue.find(x => x.id === queueId);
+    if (!q) return null;
+
+    const tried = new Set([...(q.tried_accounts || []), fromAccountId].filter(Boolean));
+    q.tried_accounts = [...tried];
+    q.retry_count = (q.retry_count || 0) + 1;
+    q.error_message = errorMessage || q.error_message;
+    q.status = 'pending';
+    q.deferred_until = null;
+
+    const nextId = (candidateAccountIds || []).find(id => id && !tried.has(id));
+    if (!nextId) return null;
+
+    q.smtp_account_id = nextId;
+    return nextId;
+  });
+}
+
+function getTriedAccounts(queueId) {
+  return withStoreRead((data) => {
+    const q = data.send_queue.find(x => x.id === queueId);
+    return q?.tried_accounts || [];
+  });
+}
+
 function endOfToday() {
   const d = new Date();
   d.setHours(23, 59, 59, 999);
@@ -1191,7 +1222,7 @@ module.exports = {
   getCampaignSentCount, getContactCounts, getAllListCounts,
   suppressContact, getSentEmailsForList,
   getCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, getCampaignsByStatus,
-  queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, deferQueueItem,
+  queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, failoverQueueItem, getTriedAccounts, deferQueueItem,
   deferBlockedQueueItems, getAccountQuotaState, setAccountQuotaState,
   pauseAllCampaigns, pauseCampaignsForAccount,
   markSent, markFailed, updateCampaignStatuses,
