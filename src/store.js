@@ -1,7 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const { dataDir, isServerless } = require('./paths');
-const { downloadStore, uploadStore, getPersistMode, hasKv } = require('./kv-persist');
+const {
+  downloadStore,
+  uploadStore,
+  downloadSmtpAccounts,
+  uploadSmtpAccounts,
+  getPersistMode,
+  hasKv,
+} = require('./kv-persist');
 
 const dbPath = path.join(dataDir, 'store.json');
 
@@ -19,7 +26,17 @@ let memory = null;
 let loadedVersion = 0;
 let loadedAt = 0;
 let persistPromise = Promise.resolve();
+let smtpPersistPromise = Promise.resolve();
 let hydrating = null;
+
+function applySmtpOverlay(data, smtpList) {
+  if (!data) return data;
+  if (!data.meta) data.meta = {};
+  if (Array.isArray(smtpList)) {
+    data.meta.saved_smtp_accounts = smtpList;
+  }
+  return data;
+}
 
 function loadFromFile() {
   if (!fs.existsSync(dbPath)) return null;
@@ -62,18 +79,38 @@ async function ensureFresh(force = false) {
 
   hydrating = (async () => {
     if (hasKv()) {
-      const remote = await downloadStore();
+      const [remote, smtpRemote] = await Promise.all([
+        downloadStore(),
+        downloadSmtpAccounts(),
+      ]);
       if (remote) {
         const remoteVersion = remote.meta?.storeVersion || 0;
         if (!memory || remoteVersion >= loadedVersion) {
           memory = migrateData(remote);
           loadedVersion = remoteVersion;
-          saveToFile(memory);
+        } else if (memory && Array.isArray(smtpRemote)) {
+          // Keep newer local store body, but never drop durable SMTP inboxes
+          applySmtpOverlay(memory, smtpRemote);
         }
       } else if (!memory) {
         memory = loadFromFile() || empty();
         loadedVersion = memory.meta?.storeVersion || 0;
       }
+
+      // Dedicated SMTP key always wins (survives contact-upload races)
+      if (memory && Array.isArray(smtpRemote)) {
+        applySmtpOverlay(memory, smtpRemote);
+      } else if (
+        memory
+        && Array.isArray(memory.meta?.saved_smtp_accounts)
+        && memory.meta.saved_smtp_accounts.length
+        && smtpRemote == null
+      ) {
+        // One-time migrate: copy SMTP out of main store into dedicated key
+        scheduleSmtpSave(memory.meta.saved_smtp_accounts);
+      }
+
+      if (memory) saveToFile(memory);
     } else if (!memory) {
       memory = loadFromFile() || empty();
       loadedVersion = memory.meta?.storeVersion || 0;
@@ -97,8 +134,21 @@ function scheduleRemoteSave(data) {
     .catch((err) => console.error('[store] KV persist failed:', err.message));
 }
 
+function scheduleSmtpSave(accounts) {
+  if (!hasKv()) return;
+  const snapshot = JSON.parse(JSON.stringify(accounts || []));
+  smtpPersistPromise = smtpPersistPromise
+    .then(() => uploadSmtpAccounts(snapshot))
+    .catch((err) => console.error('[store] SMTP KV persist failed:', err.message));
+}
+
 async function flushPersist() {
-  await persistPromise;
+  await Promise.all([persistPromise, smtpPersistPromise]);
+}
+
+async function persistSmtpAccountsNow(accounts) {
+  scheduleSmtpSave(accounts);
+  await smtpPersistPromise;
 }
 
 function getStorageInfo() {
@@ -976,7 +1026,7 @@ function getSavedSmtpAccounts() {
 }
 
 function saveSmtpAccount(account) {
-  return withStore((data) => {
+  const result = withStore((data) => {
     const list = data.meta?.saved_smtp_accounts || [];
     const id = account.id || `saved_${Date.now()}`;
     const existing = list.findIndex(a => a.id === id);
@@ -1005,8 +1055,10 @@ function saveSmtpAccount(account) {
       list.push(entry);
     }
     data.meta = { ...(data.meta || {}), saved_smtp_accounts: list };
+    scheduleSmtpSave(list);
     return { ...entry, pass: '••••••••' };
   });
+  return result;
 }
 
 function getSavedSmtpAccountRaw(id) {
@@ -1019,10 +1071,12 @@ function getAllSavedSmtpAccountsRaw() {
 
 function deleteSavedSmtpAccount(id) {
   withStore((data) => {
+    const list = (data.meta?.saved_smtp_accounts || []).filter(a => a.id !== id);
     data.meta = {
       ...(data.meta || {}),
-      saved_smtp_accounts: (data.meta?.saved_smtp_accounts || []).filter(a => a.id !== id),
+      saved_smtp_accounts: list,
     };
+    scheduleSmtpSave(list);
   });
 }
 
@@ -1266,5 +1320,5 @@ module.exports = {
   getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, getAllSavedSmtpAccountsRaw, deleteSavedSmtpAccount,
   setAccountDisabled, setAccountStopped, isAccountStoppedMeta,
   getQueueProgress, resumeSendingCampaigns, getAnalytics, markReply, markBounce,
-  ensureFresh, flushPersist, getStorageInfo,
+  ensureFresh, flushPersist, persistSmtpAccountsNow, getStorageInfo,
 };

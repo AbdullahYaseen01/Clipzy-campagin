@@ -70,6 +70,8 @@ function scheduleBackground(promise) {
 app.use(async (req, res, next) => {
   try {
     await store.ensureFresh();
+    // Accounts can be added on another instance — never serve a stale in-memory list
+    resetAccountsCache();
     next();
   } catch (err) {
     next(err);
@@ -201,6 +203,8 @@ app.post('/api/accounts/connect', async (req, res) => {
     });
 
     store.setAccountDisabled(saved.id, false);
+    // Wait until Upstash has the inbox — otherwise the next contact upload can race and drop it
+    await store.flushPersist();
     resetAccountsCache();
     resetTransporter();
 
@@ -215,7 +219,7 @@ app.post('/api/accounts/connect', async (req, res) => {
   }
 });
 
-app.delete('/api/accounts/:id', (req, res) => {
+app.delete('/api/accounts/:id', async (req, res) => {
   const id = req.params.id;
   const acc = getAccount(id);
   const saved = store.getSavedSmtpAccountRaw(id);
@@ -229,6 +233,7 @@ app.delete('/api/accounts/:id', (req, res) => {
   }
 
   store.setAccountStopped(id, false);
+  await store.flushPersist();
   resetAccountsCache();
   resetTransporter(id);
   res.json({ success: true, message: 'Account removed', accounts: getAccountStatuses() });

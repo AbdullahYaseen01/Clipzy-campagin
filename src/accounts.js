@@ -133,7 +133,7 @@ function loadSavedAccounts(usedListIds, usedEmails) {
       id: s.id,
       listId,
       label: s.label || s.email,
-      listLabel: s.listLabel || `Data List (${s.email.split('@')[0]})`,
+      listLabel: s.listLabel || `Data List ${String(listId).replace(/^list/, '')}`,
       email: s.email,
       pass: s.pass,
       fromName: s.fromName || 'The Clipzy Team',
