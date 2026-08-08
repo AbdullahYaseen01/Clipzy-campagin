@@ -165,23 +165,53 @@ function renderAccountCards(accounts) {
   }).join('');
 }
 
+const EMAIL_PROVIDER_PRESETS = {
+  gmail: { host: 'smtp.gmail.com', port: 587, secure: false, hint: 'Gmail: use Google App Password (not normal password).' },
+  hostinger: { host: 'smtp.hostinger.com', port: 465, secure: true, hint: 'Hostinger: full email + mailbox password.' },
+  outlook: { host: 'smtp-mail.outlook.com', port: 587, secure: false, hint: 'Outlook / Hotmail app password or account password.' },
+  yahoo: { host: 'smtp.mail.yahoo.com', port: 587, secure: false, hint: 'Yahoo: generate an app password.' },
+  zoho: { host: 'smtp.zoho.com', port: 587, secure: false, hint: 'Zoho: use app-specific password.' },
+  custom: { host: '', port: 587, secure: false, hint: 'Enter your SMTP host, port, and password.' },
+};
+
+function applyAddEmailProvider() {
+  const id = document.getElementById('addEmailProvider')?.value || 'gmail';
+  const p = EMAIL_PROVIDER_PRESETS[id] || EMAIL_PROVIDER_PRESETS.custom;
+  const hint = document.getElementById('addEmailProviderHint');
+  if (hint) hint.textContent = p.hint;
+  const smtpFields = document.getElementById('addEmailSmtpFields');
+  const showCustom = id === 'custom';
+  smtpFields?.classList.toggle('hidden', !showCustom);
+  if (document.getElementById('addEmailHost')) document.getElementById('addEmailHost').value = p.host;
+  if (document.getElementById('addEmailPort')) document.getElementById('addEmailPort').value = p.port;
+  if (document.getElementById('addEmailSecure')) document.getElementById('addEmailSecure').value = p.secure ? 'true' : 'false';
+}
+
 document.getElementById('openAddGmailBtn')?.addEventListener('click', () => {
   document.getElementById('addGmailModal')?.classList.remove('hidden');
+  applyAddEmailProvider();
 });
 document.getElementById('closeAddGmailModal')?.addEventListener('click', () => {
   document.getElementById('addGmailModal')?.classList.add('hidden');
 });
+document.getElementById('addEmailProvider')?.addEventListener('change', applyAddEmailProvider);
+
 document.getElementById('addGmailForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
+  const provider = document.getElementById('addEmailProvider')?.value || 'gmail';
+  const preset = EMAIL_PROVIDER_PRESETS[provider] || EMAIL_PROVIDER_PRESETS.custom;
   const email = document.getElementById('addGmailEmail').value.trim();
   const pass = document.getElementById('addGmailPass').value.trim();
   const label = document.getElementById('addGmailLabel').value.trim();
+  const host = (document.getElementById('addEmailHost')?.value || preset.host || '').trim();
+  const port = parseInt(document.getElementById('addEmailPort')?.value || preset.port, 10);
+  const secure = (document.getElementById('addEmailSecure')?.value || String(!!preset.secure)) === 'true';
   try {
     const res = await api('/accounts/connect', {
       method: 'POST',
-      body: JSON.stringify({ email, pass, label }),
+      body: JSON.stringify({ email, pass, label, provider, host, port, secure }),
     });
-    toast(res.message || 'Gmail connected');
+    toast(res.message || 'Email connected');
     document.getElementById('addGmailModal')?.classList.add('hidden');
     document.getElementById('addGmailForm').reset();
     loadDashboard();

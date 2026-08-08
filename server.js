@@ -130,22 +130,41 @@ app.get('/api/accounts', (req, res) => {
   res.json({ accounts, lists });
 });
 
-/** Connect a Gmail with just email + app password */
+/** Connect any mailbox: Gmail, Hostinger, Outlook, or custom SMTP */
 app.post('/api/accounts/connect', async (req, res) => {
   try {
     const email = (req.body.email || '').trim();
     const pass = (req.body.pass || req.body.password || '').trim();
     const label = (req.body.label || '').trim();
     const fromName = (req.body.fromName || process.env.SMTP_FROM_NAME || 'The Clipzy Team').trim();
+    const providerId = (req.body.provider || 'gmail').trim();
+    const provider = getProvider(providerId);
+
     if (!email || !email.includes('@')) {
-      return res.status(400).json({ error: 'Valid Gmail address required' });
+      return res.status(400).json({ error: 'Valid email address required' });
     }
-    if (!pass) return res.status(400).json({ error: 'App password required' });
+    if (!pass) return res.status(400).json({ error: 'Password / App password required' });
+
+    let host = (req.body.host || provider.host || '').trim();
+    let port = parseInt(req.body.port, 10) || provider.port || 587;
+    let secure = req.body.secure === true || req.body.secure === 'true' || !!provider.secure;
+
+    // Auto-pick Hostinger if custom domain and provider left as gmail by mistake
+    if ((!host || providerId === 'gmail') && !email.toLowerCase().endsWith('@gmail.com') && !email.toLowerCase().endsWith('@googlemail.com')) {
+      if (providerId === 'hostinger' || req.body.autoHostinger) {
+        host = 'smtp.hostinger.com';
+        port = 465;
+        secure = true;
+      }
+    }
+    if (!host) {
+      return res.status(400).json({ error: 'SMTP host required (choose Hostinger / Custom)' });
+    }
 
     const cfg = {
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
+      host,
+      port,
+      secure,
       email,
       pass: pass.replace(/\s/g, ''),
       fromName,
@@ -163,13 +182,14 @@ app.post('/api/accounts/connect', async (req, res) => {
       listId = `list${n}`;
     }
 
+    const providerLabel = provider?.name || providerId;
     const saved = store.saveSmtpAccount({
       id: existing?.id,
-      provider: 'gmail',
-      label: label || `Gmail — ${email.split('@')[0]}`,
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
+      provider: providerId || 'custom',
+      label: label || `${providerLabel} — ${email.split('@')[0]}`,
+      host,
+      port,
+      secure,
       email,
       pass,
       fromName,
@@ -180,7 +200,6 @@ app.post('/api/accounts/connect', async (req, res) => {
       verified: true,
     });
 
-    // If this email was previously an env account that was disabled, clear disable
     store.setAccountDisabled(saved.id, false);
     resetAccountsCache();
     resetTransporter();
@@ -188,11 +207,11 @@ app.post('/api/accounts/connect', async (req, res) => {
     res.json({
       success: true,
       account: saved,
-      message: `Connected ${email}`,
+      message: `Connected ${email} via ${host}`,
       accounts: getAccountStatuses(),
     });
   } catch (err) {
-    res.status(400).json({ error: err.message || 'Could not connect Gmail' });
+    res.status(400).json({ error: err.message || 'Could not connect email' });
   }
 });
 
