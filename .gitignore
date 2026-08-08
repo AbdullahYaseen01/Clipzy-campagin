@@ -7,3 +7,8 @@ attachments/
 *.log
 reachly.log
 .vercel
+
+# Contact CSV data (never commit PII lists)
+*.csv
+cleaned_splits/
+8,300-Data.csv
