@@ -275,11 +275,15 @@ async function sendTestEmail(campaign, testTo, sampleContact, accountId) {
 
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3', 10);
 
+function getHealthyAccountIds(excludeAccountId = null) {
+  return getAccounts()
+    .filter(a => a.id !== excludeAccountId && accountCanSend(a.id))
+    .map(a => a.id);
+}
+
 function getFailoverCandidates(excludeAccountId, tried = []) {
   const triedSet = new Set([...(tried || []), excludeAccountId].filter(Boolean));
-  return getAccounts()
-    .filter(a => !triedSet.has(a.id) && accountCanSend(a.id))
-    .map(a => a.id);
+  return getHealthyAccountIds(excludeAccountId).filter(id => !triedSet.has(id));
 }
 
 /**
@@ -303,6 +307,48 @@ function tryFailoverToNextAccount(item, fromAccountId, reason) {
   return nextId;
 }
 
+/**
+ * When an inbox hits daily limit / is blocked / stopped: move its whole pending queue
+ * onto healthy inboxes that still have remaining quota (keeps campaign moving today).
+ */
+function redistributeFromExhaustedAccount(accountId, reason = 'Daily limit reached') {
+  if (!accountId || store.getPendingCount(accountId) === 0) return { moved: 0, targets: {} };
+
+  const candidates = getHealthyAccountIds(accountId);
+  if (candidates.length === 0) return { moved: 0, targets: {} };
+
+  const result = store.redistributePendingFromAccount(
+    accountId,
+    candidates,
+    { reason: `${reason} — moved to inbox with remaining limit` }
+  );
+
+  if (result.moved > 0) {
+    const summary = Object.entries(result.targets).map(([id, n]) => `${id}:${n}`).join(', ');
+    console.warn(`⇄ [${accountId}] Redistributed ${result.moved} pending → ${summary}`);
+    const { isServerless } = require('./paths');
+    if (!isServerless) {
+      for (const targetId of Object.keys(result.targets)) {
+        if (accountCanSend(targetId) && store.getPendingCount(targetId) > 0) {
+          scheduleAccountSender(targetId);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/** Drain every inbox that cannot send but still owns pending work. */
+function redistributeAllExhaustedAccounts(reason = 'Inbox unavailable') {
+  const results = [];
+  for (const acc of getAccounts()) {
+    if (accountCanSend(acc.id)) continue;
+    if (store.getPendingCount(acc.id) === 0) continue;
+    results.push({ accountId: acc.id, ...redistributeFromExhaustedAccount(acc.id, reason) });
+  }
+  return results;
+}
+
 async function processNextEmailForAccount(accountId) {
   const state = initAccountState(accountId);
   if (state.isSending) return { skipped: true, reason: 'already_sending', accountId };
@@ -312,7 +358,15 @@ async function processNextEmailForAccount(accountId) {
   }
 
   if (!accountCanSend(accountId)) {
-    return { skipped: true, reason: 'at_limit', accountId };
+    // Soft daily limit / blocked / stopped: do not leave this inbox's queue stranded.
+    const moved = redistributeFromExhaustedAccount(accountId, 'Daily limit or inbox unavailable');
+    return {
+      skipped: true,
+      reason: 'at_limit',
+      accountId,
+      redistributed: moved.moved || 0,
+      failoverTargets: moved.targets || {},
+    };
   }
 
   const items = store.getPendingQueue(1, accountId);
@@ -354,9 +408,20 @@ async function processNextEmailForAccount(accountId) {
     if (classified.stopDay) {
       markAccountDailyQuotaHit(accountId);
       stopAccountSender(accountId);
+      // Prefer explicit single-item failover for this recipient, then drain the rest of the inbox queue.
       const nextId = tryFailoverToNextAccount(item, accountId, 'Daily limit on inbox');
-      if (nextId) {
-        return { success: false, email: item.email, retry: true, failover: nextId, error: classified.message, accountId, stopDay: true };
+      const bulk = redistributeFromExhaustedAccount(accountId, 'Daily limit on inbox');
+      if (nextId || (bulk.moved || 0) > 0) {
+        return {
+          success: false,
+          email: item.email,
+          retry: true,
+          failover: nextId || Object.keys(bulk.targets || {})[0] || null,
+          redistributed: bulk.moved || 0,
+          error: classified.message,
+          accountId,
+          stopDay: true,
+        };
       }
       store.deferQueueItem(item.queue_id, classified.message);
       console.error(`⛔ [${accountId}] Daily limit — no failover left for ${item.email}`);
@@ -437,8 +502,14 @@ function scheduleAccountSender(accountId) {
     if (!accountTimers[accountId]) return;
 
     const pending = store.getPendingCount(accountId);
-    if (pending === 0 || !accountCanSend(accountId)) {
+    if (pending === 0) {
       stopAccountSender(accountId);
+      if (store.getPendingCount() === 0) store.updateCampaignStatuses();
+      return;
+    }
+    if (!accountCanSend(accountId)) {
+      stopAccountSender(accountId);
+      redistributeFromExhaustedAccount(accountId, 'Daily limit or inbox unavailable');
       if (store.getPendingCount() === 0) store.updateCampaignStatuses();
       return;
     }
@@ -488,6 +559,14 @@ async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null
   // Never auto-unpause user-paused campaigns during ticks
   store.resumeSendingCampaigns({ includePaused: false });
   if (force) store.setMeta({ userStoppedSender: false });
+
+  // Soft daily-limit / blocked / stopped inboxes: move their pending work onto healthy inboxes
+  // before this tick runs, so remaining quota is used the same day.
+  try {
+    redistributeAllExhaustedAccounts('Daily limit or inbox unavailable');
+  } catch (err) {
+    console.warn('[tick] redistribute failed:', err.message);
+  }
 
   // Parallel per-inbox send — one account failing must not stop others
   const accountJobs = getAccounts().map(async (acc) => {
@@ -557,6 +636,12 @@ function startSender() {
     if (deferred > 0) {
       console.log(`[${acc.id}] Deferred ${deferred} stuck queue item(s) until tomorrow`);
     }
+  }
+
+  // Move work off exhausted inboxes before starting workers.
+  redistributeAllExhaustedAccounts('Daily limit or inbox unavailable');
+
+  for (const acc of getAccounts()) {
     const pending = store.getPendingCount(acc.id);
     if (pending > 0 && accountCanSend(acc.id)) {
       scheduleAccountSender(acc.id);

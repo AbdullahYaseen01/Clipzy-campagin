@@ -768,6 +768,53 @@ function failoverQueueItem(queueId, fromAccountId, errorMessage, candidateAccoun
   });
 }
 
+/**
+ * Pure helper: reassign pending queue rows from an exhausted inbox onto healthy candidates.
+ * Prefer accounts not yet tried for that recipient; fall back to any candidate so the day is not stuck.
+ * Follow-ups are included — sticky assignment applies at queue time, not when the sticky inbox is out of quota.
+ */
+function applyPendingRedistribution(data, fromAccountId, candidateAccountIds = [], { reason = null } = {}) {
+  const candidates = [...new Set((candidateAccountIds || []).filter(id => id && id !== fromAccountId))];
+  if (!fromAccountId || candidates.length === 0) return { moved: 0, targets: {} };
+
+  let rotate = 0;
+  let moved = 0;
+  const targets = {};
+
+  for (const q of data.send_queue) {
+    if (q.status !== 'pending') continue;
+
+    const camp = data.campaigns.find(c => c.id === q.campaign_id);
+    if (!camp || !['sending', 'queued'].includes(camp.status)) continue;
+
+    const smtpId = q.smtp_account_id || camp.smtp_account_id || 'account1';
+    if (smtpId !== fromAccountId) continue;
+
+    const tried = new Set([...(q.tried_accounts || []), fromAccountId].filter(Boolean));
+    const preferred = candidates.filter(id => !tried.has(id));
+    const pool = preferred.length > 0 ? preferred : candidates;
+    const nextId = pool[rotate % pool.length];
+    rotate += 1;
+
+    q.tried_accounts = [...tried];
+    q.smtp_account_id = nextId;
+    q.deferred_until = null;
+    if (reason) q.error_message = reason;
+    targets[nextId] = (targets[nextId] || 0) + 1;
+    moved += 1;
+  }
+
+  return { moved, targets };
+}
+
+/**
+ * Move all pending work off an inbox that cannot send (daily limit / stopped / blocked).
+ * Returns { moved, targets }.
+ */
+function redistributePendingFromAccount(fromAccountId, candidateAccountIds = [], opts = {}) {
+  return withStore((data) => applyPendingRedistribution(data, fromAccountId, candidateAccountIds, opts));
+}
+
 function getTriedAccounts(queueId) {
   return withStoreRead((data) => {
     const q = data.send_queue.find(x => x.id === queueId);
@@ -1310,7 +1357,8 @@ module.exports = {
   getCampaignSentCount, getContactCounts, getAllListCounts,
   suppressContact, getSentEmailsForList,
   getCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, getCampaignsByStatus,
-  queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, failoverQueueItem, getTriedAccounts, deferQueueItem,
+  queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, failoverQueueItem,
+  applyPendingRedistribution, redistributePendingFromAccount, getTriedAccounts, deferQueueItem,
   deferBlockedQueueItems, getAccountQuotaState, setAccountQuotaState,
   pauseAllCampaigns, pauseCampaignsForAccount,
   markSent, markFailed, updateCampaignStatuses,
