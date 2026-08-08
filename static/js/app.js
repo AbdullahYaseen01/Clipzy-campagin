@@ -142,7 +142,9 @@ function renderAccountCards(accounts) {
     else if (a.dailyQuotaHit) { badge = 'warning'; badgeText = 'Daily limit'; }
     else if (a.protected) { badge = 'protected'; badgeText = 'Protected'; }
     const pct = a.dailyLimit > 0 ? Math.round((a.todaySent / a.dailyLimit) * 100) : 0;
-    return `<div class="account-card ${a.protected ? 'protected' : ''}">
+    const stopped = !!a.userStopped;
+    if (stopped) { badge = 'warning'; badgeText = 'Stopped'; }
+    return `<div class="account-card ${a.protected ? 'protected' : ''} ${stopped ? 'stopped' : ''}">
       <div class="account-card-header">
         <div><strong>${escapeHtml(a.label)}</strong><div class="account-card-email">${escapeHtml(a.email)}</div></div>
         <span class="account-badge ${badge}">${badgeText}</span>
@@ -151,8 +153,74 @@ function renderAccountCards(accounts) {
       <div style="font-size:0.85rem;color:var(--text-muted)">
         ${a.todaySent}/${a.dailyLimit} today · ${a.remainingToday} left · ${a.sendDelayMs / 1000}s delay · ${escapeHtml(a.listLabel)}${a.pendingQueue ? ` · ${a.pendingQueue.toLocaleString()} queued` : ''}
       </div>
+      <div class="account-card-actions">
+        ${stopped
+          ? `<button type="button" class="btn btn-sm btn-success" onclick="startAccount('${a.id}')">Start</button>`
+          : `<button type="button" class="btn btn-sm" onclick="stopAccount('${a.id}')">Stop</button>`}
+        ${a.removable !== false
+          ? `<button type="button" class="btn btn-sm btn-danger" onclick="removeAccount('${a.id}', ${JSON.stringify(a.email || '')})">Remove</button>`
+          : ''}
+      </div>
     </div>`;
   }).join('');
+}
+
+document.getElementById('openAddGmailBtn')?.addEventListener('click', () => {
+  document.getElementById('addGmailModal')?.classList.remove('hidden');
+});
+document.getElementById('closeAddGmailModal')?.addEventListener('click', () => {
+  document.getElementById('addGmailModal')?.classList.add('hidden');
+});
+document.getElementById('addGmailForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('addGmailEmail').value.trim();
+  const pass = document.getElementById('addGmailPass').value.trim();
+  const label = document.getElementById('addGmailLabel').value.trim();
+  try {
+    const res = await api('/accounts/connect', {
+      method: 'POST',
+      body: JSON.stringify({ email, pass, label }),
+    });
+    toast(res.message || 'Gmail connected');
+    document.getElementById('addGmailModal')?.classList.add('hidden');
+    document.getElementById('addGmailForm').reset();
+    loadDashboard();
+    loadAccounts().then(() => populateAccountSelect());
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+async function stopAccount(id) {
+  try {
+    const res = await api(`/accounts/${id}/stop`, { method: 'POST' });
+    toast(res.message || 'Account stopped');
+    loadDashboard();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function startAccount(id) {
+  try {
+    const res = await api(`/accounts/${id}/start`, { method: 'POST' });
+    toast(res.message || 'Account started');
+    loadDashboard();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function removeAccount(id, email) {
+  if (!confirm(`Remove ${email || 'this account'}? It will stop sending from this inbox.`)) return;
+  try {
+    const res = await api(`/accounts/${id}`, { method: 'DELETE' });
+    toast(res.message || 'Account removed');
+    loadDashboard();
+    loadAccounts().then(() => populateAccountSelect());
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 function failureLabel(type) {
@@ -559,13 +627,13 @@ document.getElementById('toggleSender').addEventListener('click', async () => {
     const status = await api('/sender/status');
     if (status.running) {
       await api('/sender/stop', { method: 'POST' });
-      toast('Sender stopped — progress saved. Click Start to resume from where you left off.');
+      toast('Campaign stopped — all active campaigns paused. Click Start Sender to resume.');
     } else {
       const result = await api('/sender/start', { method: 'POST' });
       const sentNow = result.tick?.sent || 0;
       toast(sentNow > 0
-        ? `Sender started — ${sentNow} email(s) sent in this batch. Keep Dashboard open.`
-        : 'Sender started — keep Dashboard open so sending continues.');
+        ? `Sender started — ${sentNow} email(s) sent in this batch.`
+        : 'Sender started — paused campaigns resumed.');
     }
     loadDashboard();
   } catch (err) {

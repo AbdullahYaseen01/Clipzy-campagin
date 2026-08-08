@@ -812,6 +812,15 @@ tr:hover td { background: var(--surface2); }
   margin-top: 8px;
 }
 
+.accounts-toolbar-card { margin-bottom: 12px; }
+.accounts-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .account-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -824,6 +833,18 @@ tr:hover td { background: var(--surface2); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
+}
+
+.account-card.stopped {
+  opacity: 0.75;
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.account-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
 }
 
 .account-card.protected {

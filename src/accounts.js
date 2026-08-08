@@ -1,10 +1,9 @@
 const HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const PORT = parseInt(process.env.SMTP_PORT || '587', 10);
 const SECURE = process.env.SMTP_SECURE === 'true';
-// Personal Gmail: keep per-inbox volume modest so 10 accounts can share ~1500–2000/day
 const DEFAULT_DAILY = parseInt(process.env.DAILY_LIMIT || '200', 10);
 const DEFAULT_DELAY = parseInt(process.env.SEND_DELAY_MS || '20000', 10);
-const MAX_ACCOUNTS = 10;
+const MAX_ACCOUNTS = 20;
 
 function buildAccount({
   id,
@@ -20,6 +19,8 @@ function buildAccount({
   host,
   port,
   secure,
+  source = 'env',
+  removable = false,
 }) {
   if (!email || !pass) return null;
   return {
@@ -31,12 +32,14 @@ function buildAccount({
     port: port != null ? port : PORT,
     secure: secure != null ? secure : SECURE,
     email: email.trim(),
-    pass: pass.replace(/\s/g, ''),
+    pass: String(pass).replace(/\s/g, ''),
     from: email.trim(),
     fromName: fromName || 'The Clipzy Team',
     dailyLimit,
     sendDelayMs,
     protected: !!isProtected,
+    source,
+    removable,
   };
 }
 
@@ -46,10 +49,22 @@ function envFlag(name) {
   return v !== 'false' && v !== '0';
 }
 
-function loadAccounts() {
-  const accounts = [];
+function getMetaFlags() {
+  try {
+    const store = require('./store');
+    const meta = store.getMeta() || {};
+    return {
+      disabled: new Set(meta.disabled_account_ids || []),
+      stopped: new Set(meta.stopped_account_ids || []),
+    };
+  } catch {
+    return { disabled: new Set(), stopped: new Set() };
+  }
+}
 
-  for (let i = 1; i <= MAX_ACCOUNTS; i++) {
+function loadEnvAccounts() {
+  const accounts = [];
+  for (let i = 1; i <= 10; i++) {
     const user = process.env[`SMTP_ACCOUNT_${i}_USER`]
       || (i === 1 ? process.env.SMTP_USER : null);
     const pass = process.env[`SMTP_ACCOUNT_${i}_PASS`]
@@ -65,7 +80,6 @@ function loadAccounts() {
       fromName: process.env[`SMTP_ACCOUNT_${i}_FROM_NAME`]
         || process.env.SMTP_FROM_NAME
         || 'The Clipzy Team',
-      // Always Gmail SMTP unless explicitly overridden per account
       host: process.env[`SMTP_ACCOUNT_${i}_HOST`] || process.env.SMTP_HOST || 'smtp.gmail.com',
       port: process.env[`SMTP_ACCOUNT_${i}_PORT`]
         ? parseInt(process.env[`SMTP_ACCOUNT_${i}_PORT`], 10)
@@ -82,14 +96,76 @@ function loadAccounts() {
         10
       ),
       protected: false,
+      source: 'env',
+      removable: true,
     });
     if (account) accounts.push(account);
   }
+  return accounts;
+}
 
+function loadSavedAccounts(usedListIds, usedEmails) {
+  let raw = [];
+  try {
+    const store = require('./store');
+    raw = store.getAllSavedSmtpAccountsRaw() || [];
+  } catch {
+    return [];
+  }
+
+  const accounts = [];
+  let listCounter = 1;
+  for (const s of raw) {
+    if (!s.email || !s.pass) continue;
+    const emailLower = s.email.toLowerCase();
+    if (usedEmails.has(emailLower)) continue;
+
+    let listId = s.listId;
+    if (!listId || usedListIds.has(listId)) {
+      while (usedListIds.has(`list${listCounter}`)) listCounter += 1;
+      listId = `list${listCounter}`;
+      listCounter += 1;
+    }
+    usedListIds.add(listId);
+    usedEmails.add(emailLower);
+
+    const account = buildAccount({
+      id: s.id,
+      listId,
+      label: s.label || s.email,
+      listLabel: s.listLabel || `Data List (${s.email.split('@')[0]})`,
+      email: s.email,
+      pass: s.pass,
+      fromName: s.fromName || 'The Clipzy Team',
+      host: s.host || 'smtp.gmail.com',
+      port: s.port || 587,
+      secure: !!s.secure,
+      dailyLimit: s.dailyLimit || DEFAULT_DAILY,
+      sendDelayMs: s.sendDelayMs || DEFAULT_DELAY,
+      source: 'saved',
+      removable: true,
+    });
+    if (account) accounts.push(account);
+  }
   return accounts;
 }
 
 let cachedAccounts = null;
+
+function loadAccounts() {
+  const { disabled } = getMetaFlags();
+  const usedListIds = new Set();
+  const usedEmails = new Set();
+
+  const envAccounts = loadEnvAccounts().filter(a => {
+    usedListIds.add(a.listId);
+    usedEmails.add(a.email.toLowerCase());
+    return !disabled.has(a.id);
+  });
+
+  const savedAccounts = loadSavedAccounts(usedListIds, usedEmails).filter(a => !disabled.has(a.id));
+  return [...envAccounts, ...savedAccounts].slice(0, MAX_ACCOUNTS);
+}
 
 function getAccounts() {
   if (!cachedAccounts) cachedAccounts = loadAccounts();
@@ -112,11 +188,18 @@ function resetAccountsCache() {
   cachedAccounts = null;
 }
 
+function isAccountStopped(accountId) {
+  return getMetaFlags().stopped.has(accountId);
+}
+
 module.exports = {
   getAccounts,
   getAccount,
   getAccountByList,
   getDefaultAccount,
   resetAccountsCache,
+  isAccountStopped,
   MAX_ACCOUNTS,
+  DEFAULT_DAILY,
+  DEFAULT_DELAY,
 };

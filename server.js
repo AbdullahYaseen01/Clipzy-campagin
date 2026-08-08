@@ -9,7 +9,9 @@ const cron = require('node-cron');
 
 const { uploadsDir, attachmentsDir, isServerless } = require('./src/paths');
 const store = require('./src/store');
-const { getAccounts, getAccount, getAccountByList } = require('./src/accounts');
+const {
+  getAccounts, getAccount, getAccountByList, resetAccountsCache, DEFAULT_DAILY, DEFAULT_DELAY,
+} = require('./src/accounts');
 const { validateCampaign, htmlToPlain } = require('./src/email-utils');
 const {
   getSmtpConfig,
@@ -128,6 +130,109 @@ app.get('/api/accounts', (req, res) => {
   res.json({ accounts, lists });
 });
 
+/** Connect a Gmail with just email + app password */
+app.post('/api/accounts/connect', async (req, res) => {
+  try {
+    const email = (req.body.email || '').trim();
+    const pass = (req.body.pass || req.body.password || '').trim();
+    const label = (req.body.label || '').trim();
+    const fromName = (req.body.fromName || process.env.SMTP_FROM_NAME || 'The Clipzy Team').trim();
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid Gmail address required' });
+    }
+    if (!pass) return res.status(400).json({ error: 'App password required' });
+
+    const cfg = {
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      email,
+      pass: pass.replace(/\s/g, ''),
+      fromName,
+    };
+    await verifyCustomSmtp(cfg);
+
+    const existing = store.getAllSavedSmtpAccountsRaw().find(
+      a => a.email?.toLowerCase() === email.toLowerCase()
+    );
+    const usedLists = new Set(getAccounts().map(a => a.listId));
+    let listId = existing?.listId;
+    if (!listId || usedLists.has(listId)) {
+      let n = 1;
+      while (usedLists.has(`list${n}`)) n += 1;
+      listId = `list${n}`;
+    }
+
+    const saved = store.saveSmtpAccount({
+      id: existing?.id,
+      provider: 'gmail',
+      label: label || `Gmail — ${email.split('@')[0]}`,
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      email,
+      pass,
+      fromName,
+      listId,
+      listLabel: `Data List (${email.split('@')[0]})`,
+      dailyLimit: DEFAULT_DAILY,
+      sendDelayMs: DEFAULT_DELAY,
+      verified: true,
+    });
+
+    // If this email was previously an env account that was disabled, clear disable
+    store.setAccountDisabled(saved.id, false);
+    resetAccountsCache();
+    resetTransporter();
+
+    res.json({
+      success: true,
+      account: saved,
+      message: `Connected ${email}`,
+      accounts: getAccountStatuses(),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Could not connect Gmail' });
+  }
+});
+
+app.delete('/api/accounts/:id', (req, res) => {
+  const id = req.params.id;
+  const acc = getAccount(id);
+  const saved = store.getSavedSmtpAccountRaw(id);
+
+  if (saved) {
+    store.deleteSavedSmtpAccount(id);
+  } else if (acc?.source === 'env' || String(id).startsWith('account')) {
+    store.setAccountDisabled(id, true);
+  } else {
+    return res.status(404).json({ error: 'Account not found' });
+  }
+
+  store.setAccountStopped(id, false);
+  resetAccountsCache();
+  resetTransporter(id);
+  res.json({ success: true, message: 'Account removed', accounts: getAccountStatuses() });
+});
+
+app.post('/api/accounts/:id/stop', (req, res) => {
+  const id = req.params.id;
+  if (!getAccount(id) && !store.getSavedSmtpAccountRaw(id) && !String(id).startsWith('account')) {
+    return res.status(404).json({ error: 'Account not found' });
+  }
+  store.setAccountStopped(id, true);
+  resetAccountsCache();
+  res.json({ success: true, message: 'Account stopped — this inbox will not send', accounts: getAccountStatuses(), sender: getSenderStatus() });
+});
+
+app.post('/api/accounts/:id/start', (req, res) => {
+  const id = req.params.id;
+  store.setAccountStopped(id, false);
+  store.setAccountDisabled(id, false);
+  resetAccountsCache();
+  res.json({ success: true, message: 'Account started', accounts: getAccountStatuses(), sender: getSenderStatus() });
+});
+
 app.get('/api/stats', (req, res) => {
   const sender = getSenderStatus();
   const progress = store.getQueueProgress();
@@ -135,6 +240,7 @@ app.get('/api/stats', (req, res) => {
   // Watchdog: if campaign armed and pending, keep ticking in background (survives tab close when cron also set)
   if (
     isServerless
+    && sender.running
     && !sender.userStopped
     && progress.pending > 0
     && !sender.dailyLimitReached
@@ -593,7 +699,14 @@ app.post('/api/campaigns/:id/pause', (req, res) => {
   const campaign = store.getCampaign(id);
   if (campaign && ['sending', 'queued'].includes(campaign.status)) {
     store.setCampaignStatus(id, 'paused');
-    res.json({ success: true, message: 'Campaign paused. You can edit it now, then resume.' });
+    const stillActive = store.getCampaigns().some(c =>
+      c.id !== id && ['sending', 'queued'].includes(c.status)
+    );
+    if (!stillActive) {
+      store.setMeta({ userStoppedSender: true });
+      stopSender(false);
+    }
+    res.json({ success: true, message: 'Campaign paused. Sending stopped for this campaign.' });
   } else {
     res.json({ success: true, message: 'Campaign is not running' });
   }
@@ -603,13 +716,14 @@ app.post('/api/campaigns/:id/resume', async (req, res) => {
   const id = parseInt(req.params.id);
   const campaign = store.getCampaign(id);
   if (campaign && campaign.status === 'paused') {
-    store.setCampaignStatus(id, 'queued');
+    store.setCampaignStatus(id, 'sending');
+    store.setMeta({ userStoppedSender: false });
     startSender();
     if (isServerless) {
       try { await runSenderTick({ force: true }); } catch (_) { /* ignore */ }
     }
   }
-  res.json({ success: true });
+  res.json({ success: true, message: 'Campaign resumed' });
 });
 
 app.post('/api/campaigns/:id/follow-up', (req, res) => {
@@ -823,7 +937,16 @@ app.get('/api/email-config/accounts', (req, res) => {
 
 app.post('/api/email-config/accounts', (req, res) => {
   try {
-    const saved = store.saveSmtpAccount(req.body);
+    const body = { ...req.body };
+    if (!body.host) {
+      body.host = 'smtp.gmail.com';
+      body.port = 587;
+      body.secure = false;
+      body.provider = body.provider || 'gmail';
+    }
+    const saved = store.saveSmtpAccount(body);
+    resetAccountsCache();
+    resetTransporter();
     res.json({ success: true, account: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -832,6 +955,9 @@ app.post('/api/email-config/accounts', (req, res) => {
 
 app.delete('/api/email-config/accounts/:id', (req, res) => {
   store.deleteSavedSmtpAccount(req.params.id);
+  store.setAccountDisabled(req.params.id, false);
+  resetAccountsCache();
+  resetTransporter(req.params.id);
   res.json({ success: true });
 });
 

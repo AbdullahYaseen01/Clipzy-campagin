@@ -204,6 +204,9 @@ function accountCanSend(accountId) {
   const acc = getAccount(accountId);
   if (!acc) return false;
 
+  const { isAccountStopped } = require('./accounts');
+  if (isAccountStopped(accountId) || store.isAccountStoppedMeta(accountId)) return false;
+
   const state = initAccountState(accountId);
   const today = new Date().toLocaleDateString('en-CA');
 
@@ -482,7 +485,8 @@ async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null
     try { store.deferBlockedQueueItems(acc.id); } catch (_) { /* ignore */ }
   }
 
-  store.resumeSendingCampaigns();
+  // Never auto-unpause user-paused campaigns during ticks
+  store.resumeSendingCampaigns({ includePaused: false });
   if (force) store.setMeta({ userStoppedSender: false });
 
   // Parallel per-inbox send — one account failing must not stop others
@@ -535,7 +539,8 @@ async function runSenderTick({ force = false, maxPerAccount = null, maxMs = null
 function startSender() {
   const { isServerless } = require('./paths');
   store.setMeta({ userStoppedSender: false });
-  store.resumeSendingCampaigns();
+  // User clicked Start — resume paused campaigns that still have queue
+  store.resumeSendingCampaigns({ includePaused: true });
 
   // Serverless cannot keep setTimeout workers alive — tick mode only.
   if (isServerless) {
@@ -580,6 +585,11 @@ function stopSender(userInitiated = true) {
   }
 
   if (userInitiated) {
+    // Pause all active campaigns so ticks cannot continue sending
+    const active = store.getCampaigns().filter(c => ['sending', 'queued'].includes(c.status));
+    for (const c of active) {
+      store.setCampaignStatus(c.id, 'paused');
+    }
     const progress = store.getQueueProgress();
     store.setMeta({
       userStoppedSender: true,
@@ -629,8 +639,13 @@ function getAccountStatuses() {
       blockedUntil: state.blockedUntil ? new Date(state.blockedUntil).toISOString() : null,
       running: !!accountTimers[acc.id],
       isSending: !!state.isSending,
-      paused,
-      pauseReason: paused ? state.pauseReason : null,
+      userStopped: store.isAccountStoppedMeta(acc.id),
+      removable: !!acc.removable,
+      source: acc.source || 'env',
+      paused: paused || store.isAccountStoppedMeta(acc.id),
+      pauseReason: store.isAccountStoppedMeta(acc.id)
+        ? 'Stopped from dashboard'
+        : (paused ? state.pauseReason : null),
       pausedUntil: paused && state.pausedUntil ? new Date(state.pausedUntil).toISOString() : null,
       pendingQueue: store.getPendingCount(acc.id),
     };
@@ -651,7 +666,10 @@ function getSenderStatus() {
   const isSending = accounts.some(a => a.isSending);
   const pausedAccounts = accounts.filter(a => a.paused);
   const dailyQuotaHit = accounts.length > 0 && accounts.every(a => a.dailyQuotaHit || a.remainingToday <= 0);
-  const armed = !meta.userStoppedSender && progress.pending > 0 && totalRemaining > 0;
+  const hasActiveCampaign = (progress.activeCampaigns || []).some(c =>
+    ['sending', 'queued'].includes(c.status)
+  );
+  const armed = !meta.userStoppedSender && progress.pending > 0 && totalRemaining > 0 && hasActiveCampaign;
   // On serverless, "running" means campaign is armed for tick processing (no long-lived timers).
   const running = isServerless ? armed : timerRunning;
 

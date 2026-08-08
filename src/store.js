@@ -991,8 +991,9 @@ function saveSmtpAccount(account) {
       fromName: account.fromName || account.email?.split('@')[0] || '',
       pass: account.pass && account.pass !== '••••••••' ? account.pass.replace(/\s/g, '') : undefined,
       listId: account.listId || 'list1',
-      dailyLimit: parseInt(account.dailyLimit, 10) || 900,
-      sendDelayMs: parseInt(account.sendDelayMs, 10) || 5000,
+      listLabel: account.listLabel || '',
+      dailyLimit: parseInt(account.dailyLimit, 10) || 200,
+      sendDelayMs: parseInt(account.sendDelayMs, 10) || 20000,
       verified: !!account.verified,
       updated_at: now(),
     };
@@ -1012,6 +1013,10 @@ function getSavedSmtpAccountRaw(id) {
   return withStoreRead((data) => (data.meta?.saved_smtp_accounts || []).find(a => a.id === id) || null);
 }
 
+function getAllSavedSmtpAccountsRaw() {
+  return withStoreRead((data) => [...(data.meta?.saved_smtp_accounts || [])]);
+}
+
 function deleteSavedSmtpAccount(id) {
   withStore((data) => {
     data.meta = {
@@ -1019,6 +1024,28 @@ function deleteSavedSmtpAccount(id) {
       saved_smtp_accounts: (data.meta?.saved_smtp_accounts || []).filter(a => a.id !== id),
     };
   });
+}
+
+function setAccountDisabled(accountId, disabled) {
+  withStore((data) => {
+    const set = new Set(data.meta?.disabled_account_ids || []);
+    if (disabled) set.add(accountId);
+    else set.delete(accountId);
+    data.meta = { ...(data.meta || {}), disabled_account_ids: [...set] };
+  });
+}
+
+function setAccountStopped(accountId, stopped) {
+  withStore((data) => {
+    const set = new Set(data.meta?.stopped_account_ids || []);
+    if (stopped) set.add(accountId);
+    else set.delete(accountId);
+    data.meta = { ...(data.meta || {}), stopped_account_ids: [...set] };
+  });
+}
+
+function isAccountStoppedMeta(accountId) {
+  return withStoreRead((data) => (data.meta?.stopped_account_ids || []).includes(accountId));
 }
 
 function getQueueProgress() {
@@ -1077,12 +1104,19 @@ function getQueueProgress() {
   });
 }
 
-function resumeSendingCampaigns() {
+/**
+ * Only advances draft/queued campaigns into sending.
+ * Never auto-unpauses a user-paused campaign (pass includePaused=true on Resume).
+ */
+function resumeSendingCampaigns({ includePaused = false } = {}) {
   withStore((data) => {
     for (const camp of data.campaigns) {
-      if (camp.status === 'paused') {
-        const hasPending = data.send_queue.some(q => q.campaign_id === camp.id && q.status === 'pending');
-        if (hasPending) camp.status = 'queued';
+      const hasPending = data.send_queue.some(q => q.campaign_id === camp.id && q.status === 'pending');
+      if (!hasPending) continue;
+      if (camp.status === 'queued') {
+        camp.status = 'sending';
+      } else if (includePaused && camp.status === 'paused') {
+        camp.status = 'sending';
       }
     }
   });
@@ -1229,7 +1263,8 @@ module.exports = {
   getTodaySentCount, getRemainingToday, getRecentLogs, getLast7Days, getCampaignStatusCounts,
   getMeta, setMeta, getCustomVariables, setCustomVariables, addCustomVariable, deleteCustomVariable,
   getLeadProviderKeys, getLeadProviderKey, setLeadProviderKey,
-  getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, deleteSavedSmtpAccount,
+  getSavedSmtpAccounts, saveSmtpAccount, getSavedSmtpAccountRaw, getAllSavedSmtpAccountsRaw, deleteSavedSmtpAccount,
+  setAccountDisabled, setAccountStopped, isAccountStoppedMeta,
   getQueueProgress, resumeSendingCampaigns, getAnalytics, markReply, markBounce,
   ensureFresh, flushPersist, getStorageInfo,
 };
