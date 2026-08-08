@@ -127,6 +127,11 @@
                 <label>Label (optional)</label>
                 <input type="text" id="addGmailLabel" placeholder="e.g. Outreach inbox">
               </div>
+              <div class="form-group">
+                <label>Daily send limit</label>
+                <input type="number" id="addEmailDailyLimit" min="1" max="2000" placeholder="400 for Hostinger">
+                <p class="hint">Hostinger default 400/day. Gmail usually 200.</p>
+              </div>
               <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Connect</button>
               </div>
@@ -801,7 +806,7 @@
   <div class="toast-container" id="toasts"></div>
 
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
-  <script src="/js/app.js?v=21"></script>
+  <script src="/js/app.js?v=22"></script>
   <script src="/js/features.js?v=3"></script>
 </body>
 </html>

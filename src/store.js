@@ -110,6 +110,21 @@ async function ensureFresh(force = false) {
         scheduleSmtpSave(memory.meta.saved_smtp_accounts);
       }
 
+      // Hostinger inboxes: ensure durable daily limit is at least 400
+      if (memory?.meta?.saved_smtp_accounts?.length) {
+        let bumped = false;
+        for (const a of memory.meta.saved_smtp_accounts) {
+          const isHostinger = a.provider === 'hostinger'
+            || a.host === 'smtp.hostinger.com'
+            || String(a.host || '').includes('hostinger');
+          if (isHostinger && (parseInt(a.dailyLimit, 10) || 0) < 400) {
+            a.dailyLimit = 400;
+            bumped = true;
+          }
+        }
+        if (bumped) scheduleSmtpSave(memory.meta.saved_smtp_accounts);
+      }
+
       if (memory) saveToFile(memory);
     } else if (!memory) {
       memory = loadFromFile() || empty();
@@ -260,19 +275,22 @@ function addContact(email, fields = {}, listId = 'list1') {
   });
 }
 
-function addContactsBulk(rows, listId = 'list1') {
+function addContactsBulk(rows, listId = 'list1', { skipAlreadySent = true } = {}) {
   const BATCH = 500;
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, skippedAlreadySent = 0;
 
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const result = withStore((data) => {
-      let bAdded = 0, bSkipped = 0;
+      const sentEmails = skipAlreadySent ? collectSentEmails(data, { listId: 'all' }) : new Set();
+      let bAdded = 0, bSkipped = 0, bSkippedSent = 0;
       for (const row of batch) {
         const { email, name, first_name, last_name, company, title, website, linkedin } = row;
         if (!email || !email.includes('@')) { bSkipped++; continue; }
+        const emailLower = email.toLowerCase();
+        if (sentEmails.has(emailLower)) { bSkipped++; bSkippedSent++; continue; }
         const exists = data.contacts.some(c =>
-          c.email.toLowerCase() === email.toLowerCase() && c.list_id === listId
+          c.email.toLowerCase() === emailLower && c.list_id === listId
         );
         if (exists) { bSkipped++; continue; }
         data.contacts.push({
@@ -288,31 +306,37 @@ function addContactsBulk(rows, listId = 'list1') {
         });
         bAdded++;
       }
-      return { added: bAdded, skipped: bSkipped };
+      return { added: bAdded, skipped: bSkipped, skippedAlreadySent: bSkippedSent };
     });
     added += result.added;
     skipped += result.skipped;
+    skippedAlreadySent += result.skippedAlreadySent;
   }
 
-  return { added, skipped, listId };
+  return { added, skipped, skippedAlreadySent, listId };
 }
 
 /** Round-robin contacts across multiple lists so each sender inbox gets an equal share. */
-function addContactsBulkSplit(rows, listIds = ['list1']) {
+function addContactsBulkSplit(rows, listIds = ['list1'], { skipAlreadySent = true } = {}) {
   const ids = (listIds || []).filter(Boolean);
-  if (ids.length <= 1) return { ...addContactsBulk(rows, ids[0] || 'list1'), perList: {} };
+  if (ids.length <= 1) {
+    return { ...addContactsBulk(rows, ids[0] || 'list1', { skipAlreadySent }), perList: {} };
+  }
 
   const BATCH = 500;
   let added = 0;
   let skipped = 0;
+  let skippedAlreadySent = 0;
   let rotate = 0;
   const perList = Object.fromEntries(ids.map((id) => [id, 0]));
 
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const result = withStore((data) => {
+      const sentEmails = skipAlreadySent ? collectSentEmails(data, { listId: 'all' }) : new Set();
       let bAdded = 0;
       let bSkipped = 0;
+      let bSkippedSent = 0;
       const bPerList = Object.fromEntries(ids.map((id) => [id, 0]));
 
       for (const row of batch) {
@@ -322,6 +346,12 @@ function addContactsBulkSplit(rows, listIds = ['list1']) {
           continue;
         }
         const emailLower = email.toLowerCase();
+        // Already delivered by any inbox (e.g. Hostinger) — do not re-import for another send
+        if (sentEmails.has(emailLower)) {
+          bSkipped++;
+          bSkippedSent++;
+          continue;
+        }
         // Skip if this email already exists in any of the target lists
         const existsAnywhere = data.contacts.some(
           (c) => c.email.toLowerCase() === emailLower && ids.includes(c.list_id)
@@ -355,15 +385,29 @@ function addContactsBulkSplit(rows, listIds = ['list1']) {
         bAdded++;
         bPerList[listId] += 1;
       }
-      return { added: bAdded, skipped: bSkipped, perList: bPerList, rotate };
+      return {
+        added: bAdded,
+        skipped: bSkipped,
+        skippedAlreadySent: bSkippedSent,
+        perList: bPerList,
+        rotate,
+      };
     });
     added += result.added;
     skipped += result.skipped;
+    skippedAlreadySent += result.skippedAlreadySent;
     rotate = result.rotate;
     for (const id of ids) perList[id] += result.perList[id] || 0;
   }
 
-  return { added, skipped, listId: 'split', perList, listIds: ids };
+  return {
+    added,
+    skipped,
+    skippedAlreadySent,
+    listId: 'split',
+    perList,
+    listIds: ids,
+  };
 }
 
 function deleteContact(id) {
@@ -391,22 +435,35 @@ function suppressContact(contactId, status, reason) {
   });
 }
 
+function collectSentEmails(data, { listId = null } = {}) {
+  const sent = new Set();
+  const allLists = !listId || listId === 'all';
+  for (const log of data.send_log) {
+    if (log.status === 'sent' && log.email && (allLists || log.list_id === listId)) {
+      sent.add(String(log.email).toLowerCase());
+    }
+  }
+  for (const q of data.send_queue) {
+    if (q.status !== 'sent') continue;
+    const email = q.email
+      || data.contacts.find(c => c.id === q.contact_id)?.email;
+    if (!email) continue;
+    if (!allLists) {
+      const contact = data.contacts.find(c => c.id === q.contact_id);
+      if (contact && contact.list_id !== listId && q.list_id !== listId) continue;
+    }
+    sent.add(String(email).toLowerCase());
+  }
+  return sent;
+}
+
+/** Every address that already got a successful send (any list / any inbox). */
+function getGloballySentEmails() {
+  return withStoreRead((data) => collectSentEmails(data, { listId: 'all' }));
+}
+
 function getSentEmailsForList(listId) {
-  return withStoreRead((data) => {
-    const sent = new Set();
-    for (const log of data.send_log) {
-      if (log.status === 'sent' && log.list_id === listId) {
-        sent.add(log.email.toLowerCase());
-      }
-    }
-    for (const q of data.send_queue) {
-      if (q.status === 'sent') {
-        const contact = data.contacts.find(c => c.id === q.contact_id);
-        if (contact?.list_id === listId) sent.add(contact.email.toLowerCase());
-      }
-    }
-    return sent;
-  });
+  return withStoreRead((data) => collectSentEmails(data, { listId }));
 }
 
 function getActiveContactIds(listId = null) {
@@ -420,22 +477,9 @@ function getActiveContactIds(listId = null) {
 function getEligibleContactIds(listId, { skipAlreadySent = true } = {}) {
   return withStoreRead((data) => {
     const allLists = !listId || listId === 'all';
-    const sentEmails = new Set();
-    if (skipAlreadySent) {
-      for (const log of data.send_log) {
-        if (log.status === 'sent' && (allLists || log.list_id === listId)) {
-          sentEmails.add(log.email.toLowerCase());
-        }
-      }
-      for (const q of data.send_queue) {
-        if (q.status === 'sent') {
-          const contact = data.contacts.find(c => c.id === q.contact_id);
-          if (contact && (allLists || contact.list_id === listId)) {
-            sentEmails.add(contact.email.toLowerCase());
-          }
-        }
-      }
-    }
+    // Always skip globally — if Hostinger (or any inbox) already sent this address,
+    // do not send again after re-upload / re-split onto another list.
+    const sentEmails = skipAlreadySent ? collectSentEmails(data, { listId: 'all' }) : new Set();
     return data.contacts
       .filter(c => c.status === 'active' && (allLists || c.list_id === listId))
       .filter(c => !skipAlreadySent || !sentEmails.has(c.email.toLowerCase()))
@@ -580,12 +624,17 @@ function getCampaignsByStatus(statuses) {
 
 // --- Queue ---
 
-function queueCampaign(campaignId, contactIds, { allowResend = false, smtpAccountIds = null } = {}) {
+function queueCampaign(campaignId, contactIds, {
+  allowResend = false,
+  smtpAccountIds = null,
+  listAccountMap = null,
+} = {}) {
   return withStore((data) => {
     const camp = data.campaigns.find(c => c.id === campaignId);
     const listId = camp?.list_id || 'list1';
     const isFollowUp = allowResend || camp?.campaign_type === 'follow_up';
     const accountPool = Array.isArray(smtpAccountIds) && smtpAccountIds.length > 0 ? smtpAccountIds : null;
+    const listMap = listAccountMap && typeof listAccountMap === 'object' ? listAccountMap : null;
     let rotateIndex = 0;
     let added = 0;
 
@@ -617,10 +666,11 @@ function queueCampaign(campaignId, contactIds, { allowResend = false, smtpAccoun
       if (alreadyQueued) continue;
 
       if (!isFollowUp) {
+        // Global dedupe: never re-queue an address that any inbox already delivered
         const alreadySent = data.send_log.some(l =>
           l.status === 'sent'
+          && l.email
           && l.email.toLowerCase() === contact.email.toLowerCase()
-          && (listId === 'all' || l.list_id === listId)
         );
         if (alreadySent) continue;
       } else {
@@ -636,9 +686,10 @@ function queueCampaign(campaignId, contactIds, { allowResend = false, smtpAccoun
         smtpAccountId = parentAccountByContact.get(contactId) || accountPool?.[0] || 'account1';
         if (smtpAccountId === 'all') smtpAccountId = accountPool?.[0] || 'account1';
       } else {
-        // Prefer inbox mapped to this contact's list (even upload split)
+        // Prefer inbox mapped to this contact's list (works for saved Hostinger ids too)
         const listKey = contact.list_id || 'list1';
-        const mappedId = listKey.replace(/^list/, 'account');
+        const mappedId = (listMap && listMap[listKey])
+          || listKey.replace(/^list/, 'account');
         if (accountPool?.includes(mappedId)) {
           smtpAccountId = mappedId;
         } else if (accountPool?.length) {
@@ -1355,7 +1406,7 @@ module.exports = {
   getContacts, addContact, addContactsBulk, addContactsBulkSplit, deleteContact, deleteAllContacts,
   getActiveContactIds, getEligibleContactIds, getSuccessfulContactIds, getSentAccountForContact,
   getCampaignSentCount, getContactCounts, getAllListCounts,
-  suppressContact, getSentEmailsForList,
+  suppressContact, getSentEmailsForList, getGloballySentEmails,
   getCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, getCampaignsByStatus,
   queueCampaign, getPendingQueue, getPendingCount, getQueueRetries, requeueItem, failoverQueueItem,
   applyPendingRedistribution, redistributePendingFromAccount, getTriedAccounts, deferQueueItem,

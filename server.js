@@ -185,6 +185,11 @@ app.post('/api/accounts/connect', async (req, res) => {
     }
 
     const providerLabel = provider?.name || providerId;
+    const isHostinger = providerId === 'hostinger'
+      || host === 'smtp.hostinger.com'
+      || String(host).includes('hostinger');
+    const dailyLimit = parseInt(req.body.dailyLimit, 10)
+      || (isHostinger ? 400 : DEFAULT_DAILY);
     const saved = store.saveSmtpAccount({
       id: existing?.id,
       provider: providerId || 'custom',
@@ -197,7 +202,7 @@ app.post('/api/accounts/connect', async (req, res) => {
       fromName,
       listId,
       listLabel: `Data List (${email.split('@')[0]})`,
-      dailyLimit: DEFAULT_DAILY,
+      dailyLimit,
       sendDelayMs: DEFAULT_DELAY,
       verified: true,
     });
@@ -393,24 +398,30 @@ app.post('/api/contacts/upload', upload.single('file'), (req, res) => {
         const acc = getAccountByList(id);
         return `${acc?.listLabel || id}: ${result.perList?.[id] || 0}`;
       }).join(' · ');
+      const sentSkip = result.skippedAlreadySent || 0;
       return res.json({
         ...result,
         total: rows.length,
         split: true,
         listId: 'split',
         listLabel: `Split evenly (${breakdown})`,
-        message: `Split across ${listIds.length} lists — ${breakdown}`,
+        message: `Split across ${listIds.length} lists — ${breakdown}`
+          + (sentSkip ? ` · skipped ${sentSkip} already sent` : ''),
       });
     }
 
     const result = store.addContactsBulk(rows, listId);
     const acc = getAccountByList(listId);
+    const sentSkip = result.skippedAlreadySent || 0;
     res.json({
       ...result,
       total: rows.length,
       listId,
       listLabel: acc?.listLabel || listId,
       split: false,
+      message: sentSkip
+        ? `Added ${result.added}. Skipped ${sentSkip} already sent.`
+        : undefined,
     });
   } catch (err) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -659,9 +670,13 @@ app.post('/api/campaigns/:id/send', async (req, res) => {
     });
   }
 
+  const listAccountMap = Object.fromEntries(
+    accounts.map((a) => [a.listId, a.id]).filter(([list]) => list)
+  );
   const queued = queueCampaign(id, contactIds, {
     allowResend: isFollowUp,
     smtpAccountIds,
+    listAccountMap,
   });
 
   const totalDaily = useAllAccounts

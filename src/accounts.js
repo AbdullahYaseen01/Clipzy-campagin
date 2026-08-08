@@ -129,6 +129,13 @@ function loadSavedAccounts(usedListIds, usedEmails) {
     usedListIds.add(listId);
     usedEmails.add(emailLower);
 
+    const isHostinger = s.provider === 'hostinger'
+      || s.host === 'smtp.hostinger.com'
+      || String(s.host || '').includes('hostinger');
+    const dailyLimit = isHostinger
+      ? Math.max(parseInt(s.dailyLimit, 10) || 0, 400)
+      : (s.dailyLimit || DEFAULT_DAILY);
+
     const account = buildAccount({
       id: s.id,
       listId,
@@ -140,7 +147,7 @@ function loadSavedAccounts(usedListIds, usedEmails) {
       host: s.host || 'smtp.gmail.com',
       port: s.port || 587,
       secure: !!s.secure,
-      dailyLimit: s.dailyLimit || DEFAULT_DAILY,
+      dailyLimit,
       sendDelayMs: s.sendDelayMs || DEFAULT_DELAY,
       source: 'saved',
       removable: true,
