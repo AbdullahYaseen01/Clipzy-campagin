@@ -225,39 +225,51 @@ app.post('/api/accounts/connect', async (req, res) => {
 });
 
 app.delete('/api/accounts/:id', async (req, res) => {
-  const id = req.params.id;
-  const acc = getAccount(id);
-  const saved = store.getSavedSmtpAccountRaw(id);
+  try {
+    const id = decodeURIComponent(req.params.id);
+    const acc = getAccount(id);
+    const saved = store.getSavedSmtpAccountRaw(id);
 
-  if (saved) {
-    store.deleteSavedSmtpAccount(id);
-  } else if (acc?.source === 'env' || String(id).startsWith('account')) {
-    store.setAccountDisabled(id, true);
-  } else {
-    return res.status(404).json({ error: 'Account not found' });
+    if (saved) {
+      store.deleteSavedSmtpAccount(id);
+    } else if (acc?.source === 'env' || String(id).startsWith('account')) {
+      store.setAccountDisabled(id, true);
+    } else {
+      // Still try disable — env account may already be filtered from getAccounts
+      if (String(id).startsWith('account') || String(id).startsWith('saved_')) {
+        store.setAccountDisabled(id, true);
+        store.deleteSavedSmtpAccount(id);
+      } else {
+        return res.status(404).json({ error: 'Account not found' });
+      }
+    }
+
+    store.setAccountStopped(id, false);
+    await store.flushPersist();
+    resetAccountsCache();
+    resetTransporter(id);
+    res.json({ success: true, message: 'Account removed', accounts: getAccountStatuses() });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to remove account' });
   }
-
-  store.setAccountStopped(id, false);
-  await store.flushPersist();
-  resetAccountsCache();
-  resetTransporter(id);
-  res.json({ success: true, message: 'Account removed', accounts: getAccountStatuses() });
 });
 
-app.post('/api/accounts/:id/stop', (req, res) => {
-  const id = req.params.id;
+app.post('/api/accounts/:id/stop', async (req, res) => {
+  const id = decodeURIComponent(req.params.id);
   if (!getAccount(id) && !store.getSavedSmtpAccountRaw(id) && !String(id).startsWith('account')) {
     return res.status(404).json({ error: 'Account not found' });
   }
   store.setAccountStopped(id, true);
+  await store.flushPersist();
   resetAccountsCache();
   res.json({ success: true, message: 'Account stopped — this inbox will not send', accounts: getAccountStatuses(), sender: getSenderStatus() });
 });
 
-app.post('/api/accounts/:id/start', (req, res) => {
-  const id = req.params.id;
+app.post('/api/accounts/:id/start', async (req, res) => {
+  const id = decodeURIComponent(req.params.id);
   store.setAccountStopped(id, false);
   store.setAccountDisabled(id, false);
+  await store.flushPersist();
   resetAccountsCache();
   res.json({ success: true, message: 'Account started', accounts: getAccountStatuses(), sender: getSenderStatus() });
 });

@@ -6,6 +6,8 @@ const {
   uploadStore,
   downloadSmtpAccounts,
   uploadSmtpAccounts,
+  downloadAccountFlags,
+  uploadAccountFlags,
   getPersistMode,
   hasKv,
 } = require('./kv-persist');
@@ -27,6 +29,7 @@ let loadedVersion = 0;
 let loadedAt = 0;
 let persistPromise = Promise.resolve();
 let smtpPersistPromise = Promise.resolve();
+let flagsPersistPromise = Promise.resolve();
 let hydrating = null;
 
 function applySmtpOverlay(data, smtpList) {
@@ -36,6 +39,21 @@ function applySmtpOverlay(data, smtpList) {
     data.meta.saved_smtp_accounts = smtpList;
   }
   return data;
+}
+
+function applyFlagsOverlay(data, flags) {
+  if (!data || !flags) return data;
+  if (!data.meta) data.meta = {};
+  if (Array.isArray(flags.disabled)) data.meta.disabled_account_ids = flags.disabled;
+  if (Array.isArray(flags.stopped)) data.meta.stopped_account_ids = flags.stopped;
+  return data;
+}
+
+function currentAccountFlags(data = memory) {
+  return {
+    disabled: [...(data?.meta?.disabled_account_ids || [])],
+    stopped: [...(data?.meta?.stopped_account_ids || [])],
+  };
 }
 
 function loadFromFile() {
@@ -79,9 +97,10 @@ async function ensureFresh(force = false) {
 
   hydrating = (async () => {
     if (hasKv()) {
-      const [remote, smtpRemote] = await Promise.all([
+      const [remote, smtpRemote, flagsRemote] = await Promise.all([
         downloadStore(),
         downloadSmtpAccounts(),
+        downloadAccountFlags(),
       ]);
       if (remote) {
         const remoteVersion = remote.meta?.storeVersion || 0;
@@ -108,6 +127,18 @@ async function ensureFresh(force = false) {
       ) {
         // One-time migrate: copy SMTP out of main store into dedicated key
         scheduleSmtpSave(memory.meta.saved_smtp_accounts);
+      }
+
+      // Dedicated flags key always wins (Remove/Stop must survive queue writes)
+      if (memory && flagsRemote) {
+        applyFlagsOverlay(memory, flagsRemote);
+      } else if (
+        memory
+        && ((memory.meta?.disabled_account_ids || []).length
+          || (memory.meta?.stopped_account_ids || []).length)
+        && flagsRemote == null
+      ) {
+        scheduleFlagsSave(currentAccountFlags(memory));
       }
 
       // Hostinger inboxes: ensure durable daily limit is at least 400
@@ -157,8 +188,19 @@ function scheduleSmtpSave(accounts) {
     .catch((err) => console.error('[store] SMTP KV persist failed:', err.message));
 }
 
+function scheduleFlagsSave(flags) {
+  if (!hasKv()) return;
+  const snapshot = {
+    disabled: [...(flags?.disabled || [])],
+    stopped: [...(flags?.stopped || [])],
+  };
+  flagsPersistPromise = flagsPersistPromise
+    .then(() => uploadAccountFlags(snapshot))
+    .catch((err) => console.error('[store] flags KV persist failed:', err.message));
+}
+
 async function flushPersist() {
-  await Promise.all([persistPromise, smtpPersistPromise]);
+  await Promise.all([persistPromise, smtpPersistPromise, flagsPersistPromise]);
 }
 
 async function persistSmtpAccountsNow(accounts) {
@@ -1184,6 +1226,7 @@ function setAccountDisabled(accountId, disabled) {
     if (disabled) set.add(accountId);
     else set.delete(accountId);
     data.meta = { ...(data.meta || {}), disabled_account_ids: [...set] };
+    scheduleFlagsSave(currentAccountFlags(data));
   });
 }
 
@@ -1193,6 +1236,7 @@ function setAccountStopped(accountId, stopped) {
     if (stopped) set.add(accountId);
     else set.delete(accountId);
     data.meta = { ...(data.meta || {}), stopped_account_ids: [...set] };
+    scheduleFlagsSave(currentAccountFlags(data));
   });
 }
 

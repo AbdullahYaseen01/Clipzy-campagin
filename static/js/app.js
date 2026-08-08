@@ -153,12 +153,12 @@ function renderAccountCards(accounts) {
       <div style="font-size:0.85rem;color:var(--text-muted)">
         ${a.todaySent}/${a.dailyLimit} today · ${a.remainingToday} left · ${a.sendDelayMs / 1000}s delay · ${escapeHtml(a.listLabel)}${a.pendingQueue ? ` · ${a.pendingQueue.toLocaleString()} queued` : ''}
       </div>
-      <div class="account-card-actions">
+      <div class="account-card-actions" data-account-id="${escapeHtml(a.id)}" data-account-email="${escapeHtml(a.email || '')}">
         ${stopped
-          ? `<button type="button" class="btn btn-sm btn-success" onclick="startAccount('${a.id}')">Start</button>`
-          : `<button type="button" class="btn btn-sm" onclick="stopAccount('${a.id}')">Stop</button>`}
+          ? `<button type="button" class="btn btn-sm btn-success" data-action="start">Start</button>`
+          : `<button type="button" class="btn btn-sm" data-action="stop">Stop</button>`}
         ${a.removable !== false
-          ? `<button type="button" class="btn btn-sm btn-danger" onclick="removeAccount('${a.id}', ${JSON.stringify(a.email || '')})">Remove</button>`
+          ? `<button type="button" class="btn btn-sm btn-danger" data-action="remove">Remove</button>`
           : ''}
       </div>
     </div>`;
@@ -225,8 +225,9 @@ document.getElementById('addGmailForm')?.addEventListener('submit', async (e) =>
 
 async function stopAccount(id) {
   try {
-    const res = await api(`/accounts/${id}/stop`, { method: 'POST' });
+    const res = await api(`/accounts/${encodeURIComponent(id)}/stop`, { method: 'POST' });
     toast(res.message || 'Account stopped');
+    if (res.accounts) renderAccountCards(res.accounts);
     loadDashboard();
   } catch (err) {
     toast(err.message, 'error');
@@ -235,8 +236,9 @@ async function stopAccount(id) {
 
 async function startAccount(id) {
   try {
-    const res = await api(`/accounts/${id}/start`, { method: 'POST' });
+    const res = await api(`/accounts/${encodeURIComponent(id)}/start`, { method: 'POST' });
     toast(res.message || 'Account started');
+    if (res.accounts) renderAccountCards(res.accounts);
     loadDashboard();
   } catch (err) {
     toast(err.message, 'error');
@@ -246,14 +248,35 @@ async function startAccount(id) {
 async function removeAccount(id, email) {
   if (!confirm(`Remove ${email || 'this account'}? It will stop sending from this inbox.`)) return;
   try {
-    const res = await api(`/accounts/${id}`, { method: 'DELETE' });
+    const res = await api(`/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
     toast(res.message || 'Account removed');
+    if (res.accounts) {
+      renderAccountCards(res.accounts);
+      renderAccountQuotas(res.accounts);
+    }
     loadDashboard();
     loadAccounts().then(() => populateAccountSelect());
   } catch (err) {
     toast(err.message, 'error');
   }
 }
+
+window.stopAccount = stopAccount;
+window.startAccount = startAccount;
+window.removeAccount = removeAccount;
+
+document.getElementById('accountCards')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const wrap = btn.closest('[data-account-id]');
+  const id = wrap?.getAttribute('data-account-id');
+  if (!id) return;
+  const email = wrap.getAttribute('data-account-email') || '';
+  const action = btn.getAttribute('data-action');
+  if (action === 'stop') stopAccount(id);
+  else if (action === 'start') startAccount(id);
+  else if (action === 'remove') removeAccount(id, email);
+});
 
 function failureLabel(type) {
   const map = {

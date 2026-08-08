@@ -10,6 +10,8 @@
 const STORE_KEY = process.env.REACHLY_STORE_KEY || 'reachly:store';
 /** Separate key so contact/queue writes cannot wipe dashboard-added SMTP inboxes */
 const SMTP_KEY = process.env.REACHLY_SMTP_KEY || 'reachly:smtp_accounts';
+/** Disabled/stopped account flags — must not be lost when queue writes overwrite the main store */
+const FLAGS_KEY = process.env.REACHLY_FLAGS_KEY || 'reachly:account_flags';
 
 function hasKv() {
   return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
@@ -85,6 +87,38 @@ async function uploadSmtpAccounts(accounts) {
   }
 }
 
+async function downloadAccountFlags() {
+  if (!hasKv()) return null;
+  try {
+    const data = await redisCommand(['GET', FLAGS_KEY]);
+    if (data.result == null || data.result === '') return null;
+    const raw = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    const parsed = JSON.parse(raw);
+    return {
+      disabled: Array.isArray(parsed?.disabled) ? parsed.disabled : [],
+      stopped: Array.isArray(parsed?.stopped) ? parsed.stopped : [],
+    };
+  } catch (err) {
+    console.warn('[kv] flags download failed:', err.message);
+    return null;
+  }
+}
+
+async function uploadAccountFlags(flags) {
+  if (!hasKv()) return false;
+  try {
+    const payload = {
+      disabled: Array.isArray(flags?.disabled) ? [...new Set(flags.disabled)] : [],
+      stopped: Array.isArray(flags?.stopped) ? [...new Set(flags.stopped)] : [],
+    };
+    await redisCommand(['SET', FLAGS_KEY, JSON.stringify(payload)]);
+    return true;
+  } catch (err) {
+    console.error('[kv] flags upload failed:', err.message);
+    return false;
+  }
+}
+
 function getPersistMode(isServerless) {
   if (hasKv()) {
     return { mode: 'upstash', durable: true, label: 'Upstash Redis (durable)' };
@@ -103,10 +137,13 @@ function getPersistMode(isServerless) {
 module.exports = {
   STORE_KEY,
   SMTP_KEY,
+  FLAGS_KEY,
   hasKv,
   downloadStore,
   uploadStore,
   downloadSmtpAccounts,
   uploadSmtpAccounts,
+  downloadAccountFlags,
+  uploadAccountFlags,
   getPersistMode,
 };
