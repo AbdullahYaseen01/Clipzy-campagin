@@ -418,7 +418,7 @@ app.post('/api/contacts/upload', upload.single('file'), (req, res) => {
         listId: 'split',
         listLabel: `Split evenly (${breakdown})`,
         message: `Split across ${listIds.length} lists — ${breakdown}`
-          + (sentSkip ? ` · skipped ${sentSkip} already sent` : ''),
+          + (sentSkip ? ` · skipped ${sentSkip} already sent via Hostinger` : ''),
       });
     }
 
@@ -432,7 +432,7 @@ app.post('/api/contacts/upload', upload.single('file'), (req, res) => {
       listLabel: acc?.listLabel || listId,
       split: false,
       message: sentSkip
-        ? `Added ${result.added}. Skipped ${sentSkip} already sent.`
+        ? `Added ${result.added}. Skipped ${sentSkip} already sent via Hostinger (Gmail-only history can retry).`
         : undefined,
     });
   } catch (err) {

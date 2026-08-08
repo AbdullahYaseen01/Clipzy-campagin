@@ -324,7 +324,9 @@ function addContactsBulk(rows, listId = 'list1', { skipAlreadySent = true } = {}
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const result = withStore((data) => {
-      const sentEmails = skipAlreadySent ? collectSentEmails(data, { listId: 'all' }) : new Set();
+      const sentEmails = skipAlreadySent
+        ? collectSentEmails(data, { listId: 'all', scope: 'hostinger' })
+        : new Set();
       let bAdded = 0, bSkipped = 0, bSkippedSent = 0;
       for (const row of batch) {
         const { email, name, first_name, last_name, company, title, website, linkedin } = row;
@@ -375,7 +377,9 @@ function addContactsBulkSplit(rows, listIds = ['list1'], { skipAlreadySent = tru
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const result = withStore((data) => {
-      const sentEmails = skipAlreadySent ? collectSentEmails(data, { listId: 'all' }) : new Set();
+      const sentEmails = skipAlreadySent
+        ? collectSentEmails(data, { listId: 'all', scope: 'hostinger' })
+        : new Set();
       let bAdded = 0;
       let bSkipped = 0;
       let bSkippedSent = 0;
@@ -388,7 +392,7 @@ function addContactsBulkSplit(rows, listIds = ['list1'], { skipAlreadySent = tru
           continue;
         }
         const emailLower = email.toLowerCase();
-        // Already delivered by any inbox (e.g. Hostinger) — do not re-import for another send
+        // Already delivered by Hostinger — do not re-import. Gmail-only history is allowed.
         if (sentEmails.has(emailLower)) {
           bSkipped++;
           bSkippedSent++;
@@ -477,16 +481,57 @@ function suppressContact(contactId, status, reason) {
   });
 }
 
-function collectSentEmails(data, { listId = null } = {}) {
+function isHostingerSmtpAccount(account) {
+  if (!account) return false;
+  return account.provider === 'hostinger'
+    || account.host === 'smtp.hostinger.com'
+    || String(account.host || '').includes('hostinger');
+}
+
+/** Hostinger inboxes whose successful sends must never be repeated. */
+function getNoResendHosts(data) {
+  const accountIds = new Set();
+  const listIds = new Set();
+  for (const a of data.meta?.saved_smtp_accounts || []) {
+    if (!isHostingerSmtpAccount(a)) continue;
+    if (a.id) accountIds.add(a.id);
+    if (a.listId) listIds.add(a.listId);
+  }
+  return { accountIds, listIds };
+}
+
+function wasSentViaNoResend(data, { smtpAccountId, listId } = {}) {
+  const { accountIds, listIds } = getNoResendHosts(data);
+  if (!accountIds.size && !listIds.size) return false;
+  if (smtpAccountId && accountIds.has(smtpAccountId)) return true;
+  if (listId && listIds.has(listId)) return true;
+  return false;
+}
+
+function collectSentEmails(data, {
+  listId = null,
+  /** 'hostinger' = only Hostinger-sent (Gmail-sent can be retried). 'all' = any inbox. */
+  scope = 'hostinger',
+} = {}) {
   const sent = new Set();
   const allLists = !listId || listId === 'all';
+  const filterHostinger = scope === 'hostinger';
+
   for (const log of data.send_log) {
-    if (log.status === 'sent' && log.email && (allLists || log.list_id === listId)) {
-      sent.add(String(log.email).toLowerCase());
-    }
+    if (log.status !== 'sent' || !log.email) continue;
+    if (!allLists && log.list_id !== listId) continue;
+    if (filterHostinger && !wasSentViaNoResend(data, {
+      smtpAccountId: log.smtp_account_id,
+      listId: log.list_id,
+    })) continue;
+    sent.add(String(log.email).toLowerCase());
   }
   for (const q of data.send_queue) {
     if (q.status !== 'sent') continue;
+    if (filterHostinger && !wasSentViaNoResend(data, {
+      smtpAccountId: q.smtp_account_id,
+      listId: q.list_id,
+    })) continue;
     const email = q.email
       || data.contacts.find(c => c.id === q.contact_id)?.email;
     if (!email) continue;
@@ -499,13 +544,13 @@ function collectSentEmails(data, { listId = null } = {}) {
   return sent;
 }
 
-/** Every address that already got a successful send (any list / any inbox). */
+/** Addresses already delivered by Hostinger (safe to retry Gmail-only history). */
 function getGloballySentEmails() {
-  return withStoreRead((data) => collectSentEmails(data, { listId: 'all' }));
+  return withStoreRead((data) => collectSentEmails(data, { listId: 'all', scope: 'hostinger' }));
 }
 
 function getSentEmailsForList(listId) {
-  return withStoreRead((data) => collectSentEmails(data, { listId }));
+  return withStoreRead((data) => collectSentEmails(data, { listId, scope: 'hostinger' }));
 }
 
 function getActiveContactIds(listId = null) {
@@ -519,9 +564,11 @@ function getActiveContactIds(listId = null) {
 function getEligibleContactIds(listId, { skipAlreadySent = true } = {}) {
   return withStoreRead((data) => {
     const allLists = !listId || listId === 'all';
-    // Always skip globally — if Hostinger (or any inbox) already sent this address,
-    // do not send again after re-upload / re-split onto another list.
-    const sentEmails = skipAlreadySent ? collectSentEmails(data, { listId: 'all' }) : new Set();
+    // Skip only Hostinger-delivered addresses. Gmail-sent contacts may be retried
+    // from Hostinger after Gmail inboxes are removed/disabled.
+    const sentEmails = skipAlreadySent
+      ? collectSentEmails(data, { listId: 'all', scope: 'hostinger' })
+      : new Set();
     return data.contacts
       .filter(c => c.status === 'active' && (allLists || c.list_id === listId))
       .filter(c => !skipAlreadySent || !sentEmails.has(c.email.toLowerCase()))
@@ -708,11 +755,15 @@ function queueCampaign(campaignId, contactIds, {
       if (alreadyQueued) continue;
 
       if (!isFollowUp) {
-        // Global dedupe: never re-queue an address that any inbox already delivered
+        // Dedupe only Hostinger deliveries — Gmail-sent addresses may be retried
         const alreadySent = data.send_log.some(l =>
           l.status === 'sent'
           && l.email
           && l.email.toLowerCase() === contact.email.toLowerCase()
+          && wasSentViaNoResend(data, {
+            smtpAccountId: l.smtp_account_id,
+            listId: l.list_id,
+          })
         );
         if (alreadySent) continue;
       } else {
