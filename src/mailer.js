@@ -265,6 +265,16 @@ async function sendOneEmail(campaign, contact, accountId) {
       setTimeout(() => reject(new Error(`SMTP send timed out after ${timeoutMs / 1000}s`)), timeoutMs);
     }),
   ]);
+
+  // Hostinger/webmail: SMTP alone does not put mail in Sent — APPEND via IMAP
+  const acc = getAccount(accountId);
+  if (acc) {
+    const { saveCopyToSent } = require('./save-to-sent');
+    const saved = await saveCopyToSent(acc, mailOptions);
+    if (saved?.ok) {
+      console.log(`↩ [${accountId}] Saved to Sent (${saved.path})`);
+    }
+  }
 }
 
 async function sendTestEmail(campaign, testTo, sampleContact, accountId) {

@@ -141,17 +141,22 @@ async function ensureFresh(force = false) {
         scheduleFlagsSave(currentAccountFlags(memory));
       }
 
-      // Hostinger inboxes: ensure durable daily limit is at least 400
+      // Hostinger inboxes: daily limit 400 + IMAP Sent-folder defaults
       if (memory?.meta?.saved_smtp_accounts?.length) {
         let bumped = false;
         for (const a of memory.meta.saved_smtp_accounts) {
           const isHostinger = a.provider === 'hostinger'
             || a.host === 'smtp.hostinger.com'
             || String(a.host || '').includes('hostinger');
-          if (isHostinger && (parseInt(a.dailyLimit, 10) || 0) < 400) {
+          if (!isHostinger) continue;
+          if ((parseInt(a.dailyLimit, 10) || 0) < 400) {
             a.dailyLimit = 400;
             bumped = true;
           }
+          if (a.provider !== 'hostinger') { a.provider = 'hostinger'; bumped = true; }
+          if (!a.imapHost) { a.imapHost = 'imap.hostinger.com'; bumped = true; }
+          if (!a.imapPort) { a.imapPort = 993; bumped = true; }
+          if (!a.sentFolder) { a.sentFolder = 'INBOX.Sent'; bumped = true; }
         }
         if (bumped) scheduleSmtpSave(memory.meta.saved_smtp_accounts);
       }
@@ -1228,6 +1233,9 @@ function saveSmtpAccount(account) {
       host: account.host,
       port: parseInt(account.port, 10) || 587,
       secure: !!account.secure,
+      imapHost: account.imapHost || undefined,
+      imapPort: account.imapPort ? parseInt(account.imapPort, 10) : undefined,
+      sentFolder: account.sentFolder || undefined,
       email: account.email?.trim(),
       fromName: account.fromName || account.email?.split('@')[0] || '',
       pass: account.pass && account.pass !== '••••••••' ? account.pass.replace(/\s/g, '') : undefined,

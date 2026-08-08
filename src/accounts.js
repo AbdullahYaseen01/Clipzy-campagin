@@ -19,18 +19,30 @@ function buildAccount({
   host,
   port,
   secure,
+  provider,
+  imapHost,
+  imapPort,
+  sentFolder,
   source = 'env',
   removable = false,
 }) {
   if (!email || !pass) return null;
+  const resolvedHost = host || HOST;
+  const isHostinger = provider === 'hostinger'
+    || resolvedHost === 'smtp.hostinger.com'
+    || String(resolvedHost).includes('hostinger');
   return {
     id,
     listId,
     label,
     listLabel,
-    host: host || HOST,
+    host: resolvedHost,
     port: port != null ? port : PORT,
     secure: secure != null ? secure : SECURE,
+    provider: provider || (isHostinger ? 'hostinger' : undefined),
+    imapHost: imapHost || (isHostinger ? 'imap.hostinger.com' : undefined),
+    imapPort: imapPort || (isHostinger ? 993 : undefined),
+    sentFolder: sentFolder || (isHostinger ? 'INBOX.Sent' : undefined),
     email: email.trim(),
     pass: String(pass).replace(/\s/g, ''),
     from: email.trim(),
@@ -147,6 +159,10 @@ function loadSavedAccounts(usedListIds, usedEmails) {
       host: s.host || 'smtp.gmail.com',
       port: s.port || 587,
       secure: !!s.secure,
+      provider: s.provider,
+      imapHost: s.imapHost,
+      imapPort: s.imapPort,
+      sentFolder: s.sentFolder,
       dailyLimit,
       sendDelayMs: s.sendDelayMs || DEFAULT_DELAY,
       source: 'saved',
