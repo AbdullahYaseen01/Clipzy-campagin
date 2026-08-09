@@ -2,7 +2,7 @@ const SITE_URL = 'https://clipzy.xynovix.com/';
 
 const DEFAULT_EMAIL = {
   id: 'default',
-  version: 25,
+  version: 26,
   name: 'Clipzy — YouTuber outreach',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -10,19 +10,25 @@ const DEFAULT_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>The hard part is the 6 hours after:</p>
+<p>The hard part is usually the 6 hours after you hit stop:</p>
 
 <p>→ Editing the full episode<br>
-→ Cutting 3 Shorts for TikTok/YouTube<br>
+→ Cutting 3 Shorts for TikTok / YouTube<br>
 → Writing show notes that don't sound like a robot<br>
 → Scheduling posts across 4 platforms<br>
 → Doing it all again next week</p>
 
-<p><b>Clipzy was built to kill that workflow.</b></p>
+<p><b>Clipzy was built to kill that workflow.</b> One recording. One studio. Here is what you can do inside it:</p>
 
-<p>One recording. One studio. Episode + reels + captions + posts — done before you leave your desk.</p>
+<p>→ Record live podcasts with guests<br>
+→ Edit video and audio in one place<br>
+→ Generate thumbnails, titles, and descriptions<br>
+→ Cut Shorts / Reels / TikTok clips from the same episode<br>
+→ Get captions, social posts, and show notes ready to publish</p>
 
-<p>If that sounds useful for your channel, here is the studio:</p>
+<p>Episode + reels + captions + posts — done before you leave your desk.</p>
+
+<p>Try the studio here:</p>
 
 <p>${SITE_URL}</p>
 
@@ -49,7 +55,7 @@ The Clipzy Team</p>`,
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 15,
+  version: 16,
   name: 'Clipzy — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -57,19 +63,24 @@ const FOLLOW_UP_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>Just following up in case my earlier note got buried. The hard part after filming is usually the same:</p>
+<p>Quick follow-up in case my last note got buried. After filming, most creators still have to:</p>
 
-<p>→ Editing the full episode<br>
-→ Cutting Shorts for TikTok/YouTube<br>
-→ Writing show notes that don't sound like a robot<br>
-→ Scheduling posts across platforms<br>
-→ Doing it all again next week</p>
+<p>→ Edit the full episode<br>
+→ Cut Shorts for TikTok / YouTube<br>
+→ Write show notes<br>
+→ Schedule posts across platforms</p>
 
-<p><b>Clipzy was built to kill that workflow.</b></p>
+<p><b>Clipzy puts that in one studio:</b></p>
 
-<p>One recording. One studio. Episode + reels + captions + posts — done before you leave your desk.</p>
+<p>→ Record with guests<br>
+→ Edit video + audio<br>
+→ Make thumbnails, titles, and descriptions<br>
+→ Cut Shorts / Reels / TikTok clips<br>
+→ Export captions, posts, and show notes</p>
 
-<p>If it would help your channel, you can see it here:</p>
+<p>One recording in. Episode + reels + captions + posts out — before you leave your desk.</p>
+
+<p>See it here:</p>
 
 <p>${SITE_URL}</p>
 
