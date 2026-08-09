@@ -2,7 +2,7 @@ const SITE_URL = 'https://clipzy.xynovix.com/';
 
 const DEFAULT_EMAIL = {
   id: 'default',
-  version: 24,
+  version: 25,
   name: 'Clipzy — YouTuber outreach',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -10,11 +10,17 @@ const DEFAULT_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>A lot of creators tell us the same thing: filming is fine, but the work after publish is heavy — clipping, captions, titles, descriptions, thumbnails, and posts for every platform.</p>
+<p>The hard part is the 6 hours after:</p>
 
-<p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes — all from <b>one studio</b>.</p>
+<p>→ Editing the full episode<br>
+→ Cutting 3 Shorts for TikTok/YouTube<br>
+→ Writing show notes that don't sound like a robot<br>
+→ Scheduling posts across 4 platforms<br>
+→ Doing it all again next week</p>
 
-<p>From the same place you can record live podcasts with guests, edit video and audio, generate thumbnails, create titles and descriptions, cut Shorts / Reels / TikTok clips, and leave with captions, social posts, and show notes — without jumping between separate tools.</p>
+<p><b>Clipzy was built to kill that workflow.</b></p>
+
+<p>One recording. One studio. Episode + reels + captions + posts — done before you leave your desk.</p>
 
 <p>If that sounds useful for your channel, here is the studio:</p>
 
@@ -43,7 +49,7 @@ The Clipzy Team</p>`,
 
 const FOLLOW_UP_EMAIL = {
   id: 'follow-up',
-  version: 14,
+  version: 15,
   name: 'Clipzy — Follow-up',
   subject: '{{personalized_subject}}',
   preheader: '',
@@ -51,11 +57,17 @@ const FOLLOW_UP_EMAIL = {
 
 <p>{{personalized_opener}}</p>
 
-<p>Just following up in case my earlier note got buried. Many creators say the hard part is not filming — it is the cleanup after: clips, captions, thumbnails, titles, descriptions, and posts.</p>
+<p>Just following up in case my earlier note got buried. The hard part after filming is usually the same:</p>
 
-<p><b>Clipzy's purpose is simple:</b> turn <b>one long-form video</b> into short clips, captions, social posts, and show notes — all from <b>one studio</b>.</p>
+<p>→ Editing the full episode<br>
+→ Cutting Shorts for TikTok/YouTube<br>
+→ Writing show notes that don't sound like a robot<br>
+→ Scheduling posts across platforms<br>
+→ Doing it all again next week</p>
 
-<p>You can record live podcasts, edit video and audio, generate thumbnails, write titles and descriptions, cut short clips, and prepare captions plus show notes in one session.</p>
+<p><b>Clipzy was built to kill that workflow.</b></p>
+
+<p>One recording. One studio. Episode + reels + captions + posts — done before you leave your desk.</p>
 
 <p>If it would help your channel, you can see it here:</p>
 
